@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+st-sharkbite/
 
 # Spyder project settings
 .spyderproject
