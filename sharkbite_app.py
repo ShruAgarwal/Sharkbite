@@ -1,29 +1,36 @@
 import streamlit as st
 
-# REAP_INTAKE_DEFINITIONS_PAGE2: If needed directly for routing logic, though usually passed to display_form_page
 from sharkbite_engine.ui_screens import (
     set_screen_and_rerun,
-    NREL_API_KEY_HOLDER,
     display_welcome_screen_ui,
     display_form_page_from_ui,
     display_reap_score_preview_screen_from_ui,
-    display_incentive_stack_mock_screen,
-    REAP_INTAKE_DEFINITIONS_PAGE3
+    display_incentive_stack_mock_screen
 )
 
 from sharkbite_engine.utils import (
-    AI_HELPER_TEXTS, REAP_INTAKE_DEFINITIONS_PAGE2
+    AI_HELPER_TEXTS,
+    REAP_INTAKE_DEFINITIONS_PAGE2,
+    REAP_INTAKE_DEFINITIONS_PAGE3,
+    get_solar_production_pvwatts
 )
 
 # --- Page Config ---
 st.set_page_config(page_title="🦈 Sharkbite MVP App")
 
-NREL_API_KEY_HOLDER["key"] = st.secrets.get("NREL_API_KEY") # Direct assignment
-if not NREL_API_KEY_HOLDER["key"]:
-    # Only show this warning if sidebar is relevant (e.g. not on welcome before login/guest)
-    # However, for simplicity, a one-time check here is okay.
-    # Consider moving this to where PVWatts is actually called or a config section.
-    st.sidebar.warning("NREL_API_KEY not found in secrets.toml. PVWatts API calls will fail or use mock data.", icon="🚫")
+# --- Secrets Management for NREL PVWatts API Key ---
+NREL_API_KEY_FROM_SECRETS = None
+try:
+    NREL_API_KEY_FROM_SECRETS = st.secrets["NREL_API_KEY"]
+    if not NREL_API_KEY_FROM_SECRETS:
+        # This warning will appear once when the app loads if the key is missing.
+        # It's less intrusive than a sidebar warning on every screen.
+        st.toast("NREL_API_KEY not found in secrets.toml. PVWatts API calls will be disabled.", icon="🚫")
+except Exception:
+    if 'secrets_error_shown' not in st.session_state:
+        st.toast("Error loading secrets (NREL_API_KEY). PVWatts may be disabled.", icon="⚠️")
+        st.session_state.secrets_error_shown = True # Show only once
+    NREL_API_KEY_FROM_SECRETS = None
 
 
 # --- Session State Initialization ---
@@ -42,6 +49,44 @@ if 'username' not in st.session_state:
 # --- Main App Router ---
 if __name__ == "__main__":
     current_screen = st.session_state.current_screen
+
+    # --- API Call Logic Before Rendering Target Screen ---
+    # If we just navigated to 'incentive_stack_mock', and haven't processed PVWatts for current form_data yet
+    # This check prevents re-calling API on every rerun of the incentive_stack_mock screen
+    if st.session_state.current_screen == 'incentive_stack_mock' and \
+       (st.session_state.form_data.get("estimated_annual_kwh_pvwatts_value") is None and \
+        st.session_state.form_data.get("estimated_annual_kwh_pvwatts_error") is None or \
+        st.session_state.form_data.get('_pvwatts_inputs_hash') != hash( (st.session_state.form_data.get("system_size_kw"), st.session_state.form_data.get("q5_zip_code_reap")) ) ):
+        
+        system_capacity_str = st.session_state.form_data.get("system_size_kw")
+        zip_code = st.session_state.form_data.get("q5_zip_code_reap")
+
+        if NREL_API_KEY_FROM_SECRETS and system_capacity_str and zip_code:
+            try:
+                system_capacity_float = float(system_capacity_str)
+                
+                api_result_display = get_solar_production_pvwatts(
+                    NREL_API_KEY_FROM_SECRETS,
+                    system_capacity_float,
+                    zip_code
+                )
+                if isinstance(api_result_display, str): # Error message returned
+                    st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
+                    st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = api_result_display
+                else: # Value returned
+                    st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = api_result_display
+                    st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = None
+                # Store a hash of inputs to avoid re-calling if inputs haven't changed
+                st.session_state.form_data['_pvwatts_inputs_hash'] = hash( (system_capacity_str, zip_code) )
+
+            except ValueError:
+                error_msg = f"Invalid system capacity format: '{system_capacity_str}'. Must be a number."
+                st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
+                st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = error_msg
+        else:
+            error_msg = "Cannot call PVWatts: NREL API key, system size, or ZIP code is missing."
+            st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
+            st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = error_msg
 
     # --- Persistent Sidebar for Logged-in Users ---
     if st.session_state.get('logged_in', False):
@@ -75,7 +120,7 @@ if __name__ == "__main__":
             # if st.button("📋 My Projects (Future)", use_container_width=True, key="sidebar_my_projects"):
             #     st.toast("Feature coming soon!")
             
-            if st.button("Logout", icon=":material/logout:", use_container_width=True, key="sidebar_logout_nav_main"):
+            if st.button("Logout", icon=":material/logout:", type="primary", use_container_width=True, key="sidebar_logout_nav_main"):
                 st.session_state.logged_in = False
                 st.session_state.username = ""
                 st.session_state.form_data = {} # Clear form on logout

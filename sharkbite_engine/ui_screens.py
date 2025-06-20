@@ -1,14 +1,10 @@
 import streamlit as st
 from sharkbite_engine.utils import (
     AI_HELPER_TEXTS, ELIGIBILITY_CHECK_TEXTS,
-    REAP_INTAKE_DEFINITIONS_PAGE3, # Make sure these are correctly defined in utils.py or here
+    REAP_INTAKE_DEFINITIONS_PAGE3,
     calculate_reap_score_from_formulas, calculate_optional_reap_grant_estimate,
-    get_solar_production_pvwatts, MOCK_NON_REAP_INCENTIVES_DATA
+    MOCK_NON_REAP_INCENTIVES_DATA
 )
-#import time
-
-# NREL API Key - to be managed in main_app.py and accessed via this holder
-NREL_API_KEY_HOLDER = {"key": None}
 
 def set_screen_and_rerun(screen_name):
     st.session_state.current_screen = screen_name
@@ -34,15 +30,14 @@ def display_header():
     st.markdown("<h3 style='text-align: center; font-style: italic; color: #008080;'>🌟 Find Clean Energy Funding & Incentives That Work For Your Project</h3>", unsafe_allow_html=True)
     st.caption("---")
 
+# ================ MAIN UI SCREENS LOGIC GOES HERE ================
+
 def display_welcome_screen_ui():
     display_header()
-    
     col1, col2 = st.columns(2)
+
     # Sidebar is now handled in main app globally for logged-in users
     if st.session_state.get('logged_in', False):
-        #st.success(f"👋 Welcome back, {st.session_state.get('username', 'User')}!")
-
-        #st.markdown("### Start a new project or manage existing ones (future feature).")
         with col1:
             if st.button("Start New Project", type="primary", icon=":material/rocket_launch:", use_container_width=True,
                 key="loggedin_start_new_project_main_ui"):
@@ -187,31 +182,36 @@ def display_form_page_from_ui(page_title, progress_caption, section_title, item_
                 score_data = calculate_reap_score_from_formulas(st.session_state.form_data, is_rural_mock, is_energy_community_mock)
                 st.session_state.reap_score_details = {"raw_score_formula": score_data[0], "breakdown_formula": score_data[1], "norm_score_formula": score_data[2], "max_formula_score": score_data[3]}
             
-            elif next_screen_target == 'incentive_stack_mock':
-                if NREL_API_KEY_HOLDER["key"] and \
-                   st.session_state.form_data.get("system_size_kw") and \
-                   st.session_state.form_data.get("q5_zip_code_reap"):
+            #elif next_screen_target == 'incentive_stack_mock':
+
+                # system_capacity_str = st.session_state.form_data.get("system_size_kw")
+                # zip_code = st.session_state.form_data.get("q5_zip_code_reap")
                     
-                    system_capacity = st.session_state.form_data["system_size_kw"]
-                    zip_code = st.session_state.form_data["q5_zip_code_reap"]
+                # # Ensure system_capacity is a valid number for the API
+                # # Reset previous PVWatts results before making a new call
+                # st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
+                # st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = None
 
-                    # Ensure system_capacity is a valid number for the API
-                    try:
-                        system_capacity_float = float(system_capacity)
-                        pv_value = get_solar_production_pvwatts(
-                            NREL_API_KEY_HOLDER["key"],
-                            system_capacity_float,
-                            zip_code
-                        )
-                        
-                        st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = pv_value
-                        st.markdown(f"#### ☀️ PVWatts Estimated: {pv_value:,.0f} kWh/yr")
+                # if NREL_API_KEY_FROM_MAIN and system_capacity_str and zip_code:
+                    # try:
+                    #     #system_capacity_float = float(system_capacity)
+                    #     # pv_value, pv_error = get_solar_production_pvwatts(
+                    #     #     NREL_API_KEY_HOLDER,
+                    #     #     system_capacity,
+                    #     #     zip_code
+                    #     # )
+                    #     # st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = pv_value
+                    #     # st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = pv_error
+                    #     # if pv_value:
+                    #     #     st.markdown(f"#### ☀️ PVWatts Estimated: {pv_value:,.0f} kWh/yr")
+                    #     # else:
+                    #     #     st.write(pv_error)
 
-                    except ValueError:
-                        # st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
-                        st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = "Invalid system capacity value."
-                else:
-                    st.toast("Skipping PVWatts: API key, incorrect/null system size or ZIP missing.", icon="⚠️")
+                #     # except ValueError:
+                #     #     # st.session_state.form_data["estimated_annual_kwh_pvwatts_value"] = None
+                #     #     st.session_state.form_data["estimated_annual_kwh_pvwatts_error"] = "Invalid system capacity value."
+                # else:
+                #     st.toast("Skipping PVWatts: API key, incorrect/null system size or ZIP missing.", icon="⚠️")
             set_screen_and_rerun(next_screen_target)
 
 
@@ -349,26 +349,14 @@ def display_incentive_stack_mock_screen(): # New Screen 6 (Mocked for Week 1)
     st.metric(label="Total Estimated State Incentives", value=f"${total_state_incentives:,.0f}")
     
     st.markdown("---")
-    # Add PVWatts result if available
-    # Check if calculation was attempted and store result/error
-    if 'pvwatts_result' not in st.session_state:
-        st.session_state.pvwatts_result = {"value": None, "error": None}
-
     # Conditional call to PVWatts (e.g., on a button click or if inputs change and API key present)
-    # For now, let's assume it's called when navigating to this screen if key & params are present.
     # This logic is in display_form_page_from_ui when navigating TO this screen.
 
     annual_kwh_est_val = st.session_state.form_data.get("estimated_annual_kwh_pvwatts_value")
-    pvwatts_error_msg = st.session_state.form_data.get("estimated_annual_kwh_pvwatts_error")
-
+    
     # Value was successfully retrieved
     if annual_kwh_est_val is not None:
-        st.info(f"☀️ PVWatts Estimated Annual Solar Production: **{annual_kwh_est_val:,.0f} kWh/year** (This will drive MACRS, Payback, CO2 Savings in Week 2+).", icon="💡")
-    else: # An error message was returned
-        st.error(f"☀️ PVWatts API Error: {pvwatts_error_msg}", icon="🚨")
-    # else: # Not yet run or API key was missing before the call attempt
-    #     st.warning("☀️ Solar production estimate via PVWatts not yet run or NREL API key is missing/invalid. Needed for full financial modeling.", icon="⚠️")
-
+        st.info(f"☀️ PVWatts Estimated Annual Solar Production: **{annual_kwh_est_val:,.0f} kWh/year** (This will drive MACRS, Payback, CO2 Savings in Week 2+).")
 
     nav_cols = st.columns(2)
     with nav_cols[0]:

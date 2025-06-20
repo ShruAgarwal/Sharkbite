@@ -1,9 +1,8 @@
 # This file will house calculation logic, API calls, etc.
-
 import streamlit as st
 import requests
 
-# AI Helper Texts (Comprehensive - ensure these align with PDF scoring insights)
+# AI Helper Texts (Comprehensive - aligning with PDF scoring insights)
 AI_HELPER_TEXTS = {
     "q1_biz_structure": "REAP prioritizes: First-time applicants, Small Businesses (SBA definition), entities in Rural areas, Tribal entities, and Agricultural Producers. Max 15 pts for this category (combined with prior history).",
     "q7_reap_funding_history": "Being a first-time REAP applicant gives a significant point advantage. Recent awardees (last 2 years) score lower. Max 15 pts (combined with business type).",
@@ -36,8 +35,6 @@ REAP_INTAKE_DEFINITIONS_PAGE3 = [
     {"id": "q3_primary_technology", "label": "Technology", "options": ["Solar PV", "Wind Turbine", "Anaerobic Digester", "Geothermal", "Battery Storage (with solar)", "Lighting / HVAC Upgrade", "Other"], "widget": st.radio, "key": "p3_tech"},
     {"id": "system_size_kw", "label": "System Size (kW)", "widget": st.number_input, "key": "p3_sys_size", "min_value": 0.05, "max_value": 500000.0, "value": 100.0, "step": 1.0},
     {"id": "q5_zip_code_reap", "label": "Project ZIP Code", "widget": st.text_input, "key": "p3_zip", "value": "55714"},
-
-    #----------- Todo: Replace Radio widget with st.toggle widget below ---> 
     {"id": "q4_ghg_emissions", "label": "🌍 Zero GHG Emissions Project?", "options": ["Yes", "No"], "widget": st.radio, "key": "p3_ghg", "horizontal": True, "index":0},
     # For Week 1, Q6, Q8, Q9, Q10 inputs are deferred as they relate to Screen 4 (Doc Upload)
 ]
@@ -87,14 +84,26 @@ def get_solar_production_pvwatts(api_key, system_capacity_kw, zip_code, tilt=Non
     array_type: 0=Fixed Open Rack, 1=Fixed Roof Mounted, 2=1-Axis Tracking, 3=1-Axis Backtracking, 4=2-Axis Tracking
     module_type: 0=Standard, 1=Premium, 2=Thin Film
 
-    Returns (value, error message, or none).
+    Returns (value or error message).
+    Value is the 'ac_annual' if successful.
+    Error_message is a string describing the error if one occurred.
     """
     # if not api_key:
     #     st.warning(":material/warning: NREL API Key not configured. Solar production estimate will be a rough mock.")
     #     # Fallbacks to a very rough estimate (Whimsical kWh per kW per year) if API key is not added
     #     return system_capacity_kw * 1200
+    if not api_key:
+        return "NREL API Key not configured. Solar production cannot be estimated."
 
-    lat_lon = MOCK_ZIP_TO_LATLON.get(zip_code, MOCK_ZIP_TO_LATLON["55714"])
+    # Validate system_capacity_kw before making the API call
+    try:
+        system_capacity_float = float(system_capacity_kw)
+        if system_capacity_float <= 0 or system_capacity_float > 500000: # PVWatts limit
+             return f"Invalid system capacity: {system_capacity_kw} kW. Must be > 0 and <= 500,000 kW."
+    except ValueError:
+        return f"Invalid system capacity format: '{system_capacity_kw}'. Must be a number."
+
+    lat_lon = MOCK_ZIP_TO_LATLON.get(zip_code, MOCK_ZIP_TO_LATLON["default"])
 
     params = {
         "api_key": api_key,
@@ -110,18 +119,36 @@ def get_solar_production_pvwatts(api_key, system_capacity_kw, zip_code, tilt=Non
     }
     try:
         response = requests.get(PVWATTS_URL, params=params, timeout=10)
-        response.raise_for_status() # Raise an exception for HTTP errors
+        # Check if the response status code indicates an error
+        if response.status_code != 200:
+            try:
+                # Attempt to parse error from JSON response body
+                error_data = response.json()
+                errors = error_data.get('errors', [])
+                if errors:
+                    # Join multiple error messages if present
+                    error_message = "; ".join(str(e) for e in errors)
+                    return f"PVWatts API Error (HTTP {response.status_code}): {error_message}"
+                else:
+                    # If no 'errors' key, use the reason or text
+                    return f"PVWatts API HTTP Error {response.status_code}: {response.reason} - {response.text[:200]}"
+            except ValueError: # If response is not JSON
+                return f"PVWatts API HTTP Error {response.status_code}: {response.reason}. Non-JSON response: {response.text[:200]}"
+        
+        # If status code is 200, proceed to parse successful response
         data = response.json()
         if "outputs" in data and "ac_annual" in data["outputs"]:
-            return data["outputs"]["ac_annual"]
+            return data["outputs"]["ac_annual"] # Success
         else:
-            errors = data.get('errors', ['Unknown API response error.'])
-            # Sometimes errors is a list, sometimes a dict. Let's try to get a string.
-            error_str = str(errors[0]) if isinstance(errors, list) and errors else str(errors)
-            return None, f"PVWatts API response error: {error_str}"
+            # This case might occur if status is 200 but expected output is missing
+            return "PVWatts API response missing 'ac_annual' output, though request was successful."
 
-    except requests.exceptions.HTTPError as http_err:
-        return None, f"PVWatts API HTTP Error: {http_err}"
+    except requests.exceptions.RequestException as e: # Catches network issues, timeout, etc.
+        return f"PVWatts API Request Failed: {e}"
+    except ValueError as e: # Catches JSON decoding errors for successful status codes
+        return f"PVWatts API: Error decoding JSON response - {e}. Response text: {response.text[:200]}"
+    except Exception as e: # Catch-all for other unexpected errors
+        return f"Unexpected error during PVWatts API call: {e}"
 
 
 def calculate_reap_score_from_formulas(form_data, is_rural_mock, is_energy_community_mock, doc_score_mock=0):
