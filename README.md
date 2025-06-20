@@ -1,5 +1,5 @@
-# Sharkbite MVP - Clean Energy Incentive Calculator
-🦈 Take a bite out of high electric bills!
+# 🦈 Sharkbite MVP - Clean Energy Incentive Calculator
+ *Take a bite out of high electric bills!*
 
 <!---
 # Sharkbite MVP - Clean Energy Incentive Calculator
@@ -7,10 +7,10 @@
 This project is a Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users assess eligibility and estimate benefits for clean energy project incentives, with an initial focus on the USDA REAP grant.
 --->
 
-## Setup and Running the Application
-Follow these steps to get the Sharkbite MVP running on your local machine:
+## ⚙ Setup and Running the Application
+Follow these steps to get the Sharkbite MVP running on your local machine!
 
-**Prerequisites:**
+**⚡ Prerequisites**
 *   Git installed on your system.
 *   Miniconda or Anaconda installed on your system.
 
@@ -56,8 +56,8 @@ streamlit run sharkbite_app.py
 
 This will start the Streamlit development server, and the application should open automatically in your default web browser. If not, the terminal will provide a `local URL: http://localhost:8501` that you can open manually.
 
-
-## Project Structure
+<!--
+## 📁 Project Structure
 
 Sharkbite/
 ├── .streamlit/
@@ -70,4 +70,4 @@ Sharkbite/
 ├── requirements.txt         # Project dependencies
 ├── sk_logo.png              # Main App logo
 ├── .gitignore               # Files/dependencies to ignore
-└── README.md                # About the project & general instructions
+└── README.md                # About the project & general instructions-->
