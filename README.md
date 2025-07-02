@@ -56,10 +56,9 @@ streamlit run sharkbite_app.py
 
 This will start the Streamlit development server, and the application should open automatically in your default web browser. If not, the terminal will provide a `local URL: http://localhost:8501` that you can open manually.
 
-<!--
-```bash
-## 📁 Project Structure
 
+## 📁 Project Structure
+```bash
 Sharkbite/
 ├── .streamlit/
 │   └── config.toml                  # Main App Theme
@@ -82,4 +81,3 @@ Sharkbite/
 ├── .gitignore                       # Files/dependencies to ignore
 └── README.md                         # About the project & general instructions
 ```
--->
