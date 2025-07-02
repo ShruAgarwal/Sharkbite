@@ -1,0 +1,65 @@
+/* App & Sidebar Logo */
+div.st-emotion-cache-8atqhb.e1q5ojhd0 {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+/* Styling Headers */
+div[data-testid="stHeadingWithActionElements"] h1 {
+    color: #6B104C;
+    letter-spacing: 2px;
+}
+
+div[data-testid="stHeadingWithActionElements"] h3 {
+    color: #6B104C;
+    letter-spacing: 1px;
+}
+
+/* Primary filled CTA buttons */
+button.st-emotion-cache-o7edyd.e1e4lema6, button.st-emotion-cache-o7edyd.e1e4lema1 {
+    padding: 8px;
+    text-align: center;
+    cursor: pointer;
+    background-color: #233B91;
+    border: 2px solid #16ABD6;
+    box-shadow: 1px 2px #1A2D52;
+    font-weight: bold;
+    color: white;
+}
+
+button.st-emotion-cache-o7edyd.e1e4lema6:hover, button.st-emotion-cache-o7edyd.e1e4lema1:hover {
+    filter: drop-shadow(0 0 0.38rem #233B91);
+}
+
+button.st-emotion-cache-o7edyd.e1e4lema6:active, button.st-emotion-cache-o7edyd.e1e4lema1:active {
+    background-color: #182B73;
+    box-shadow: 0 3px #1A2D52;
+    transform: translateY(4px);
+}
+
+/* Secondary filled buttons */
+button.st-emotion-cache-o9b3g3.e1e4lema2 {
+    padding: 8px;
+    text-align: center;
+    cursor: pointer;
+    box-shadow: 1px 2px #1A2D52;
+}
+
+button.st-emotion-cache-18p5rst.e1e4lema2 {
+    padding: 8px;
+    text-align: center;
+    cursor: pointer;
+    box-shadow: 1px 2px #1A2D52;
+}
+
+
+/*Styling Metrics*/
+/* div.stMetric.st-emotion-cache-0.e14qm3310,
+div.stColumn.st-emotion-cache-3u1gzc.eertqu01,
+div.stColumn.st-emotion-cache-3u1gzc.eertqu01 {
+    background-color: #C8D2F5;
+    border: 2px solid #B3BCF3;
+    border-radius: 5px;
+    padding: 10px 10px 10px 23px;
+} */

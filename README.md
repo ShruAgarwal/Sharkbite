@@ -57,17 +57,29 @@ streamlit run sharkbite_app.py
 This will start the Streamlit development server, and the application should open automatically in your default web browser. If not, the terminal will provide a `local URL: http://localhost:8501` that you can open manually.
 
 <!--
+```bash
 ## 📁 Project Structure
 
 Sharkbite/
 ├── .streamlit/
-│   └── config.toml          # Main App Theme
-│   └── secrets.toml         # For API keys and other secrets
-├── sharkbite_engine/        # Core logic and utilities
-│   ├── utils.py             # Calculation functions, API calls, constants
-│   └── ui_screens.py        # Streamlit screen rendering functions
-├── sharkbite_app.py         # Main Streamlit app
-├── requirements.txt         # Project dependencies
-├── sk_logo.png              # Main App logo
-├── .gitignore               # Files/dependencies to ignore
-└── README.md                # About the project & general instructions-->
+│   └── config.toml                  # Main App Theme
+│   └── secrets.toml                 # API keys and other secrets
+├── assets/
+│   └── custom_style.css             # Custom CSS file
+│   └── logo.png                     # App logo
+├── static/
+│   └── BebasNeue-Regular.ttf        # Custom font family for headers in the app
+├── sharkbite_engine/                # Core logic and utilities
+│   ├── solar_calculator_logic.py    # Calculation functions, API calls
+│   └── ui_calculator_screen.py      # Streamlit screen 2 rendering functions
+│   └── ui_unified_intake_screen.py  # Streamlit screen 1 rendering functions
+│   └── ui_reap_flow_screens.py      # Streamlit screens 3-6 rendering functions
+│   └── ui_login_screen.py           # Streamlit main login screen function
+│   └── utils.py                     # Constants & other functions
+├── sharkbite_mvp v1.0/              # Older App Version
+├── sharkbite_app.py                 # Streamlit App
+├── requirements.txt                 # Project dependencies
+├── .gitignore                       # Files/dependencies to ignore
+└── README.md                         # About the project & general instructions
+```
+-->

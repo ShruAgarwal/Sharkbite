@@ -1,5 +1,13 @@
+[server]
+enableStaticServing = true
+
 [theme]
-primaryColor="#0a1401"
-backgroundColor="#f4feeb"
-secondaryBackgroundColor="#daf3cd"
-textColor="#4b0914"
+primaryColor="#233B91"
+backgroundColor="#FFFFFF"
+secondaryBackgroundColor="#30D0C8"
+textColor="#1A2D52"
+headingFont="Bebas Neue"
+
+[[theme.fontFaces]]
+url = "app/static/BebasNeue-Regular.ttf"
+family = "Bebas Neue"

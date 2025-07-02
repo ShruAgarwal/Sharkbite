@@ -1,5 +1,5 @@
 import streamlit as st
-from sharkbite_engine.utils import (
+from sharkbite_engine_v1.utils_v1 import (
     AI_HELPER_TEXTS, ELIGIBILITY_CHECK_TEXTS,
     REAP_INTAKE_DEFINITIONS_PAGE3,
     calculate_reap_score_from_formulas, calculate_optional_reap_grant_estimate,
@@ -24,7 +24,7 @@ def display_header():
         """,
         unsafe_allow_html=True
     )
-    st.image("sk_logo.png", width = 350)
+    st.image("logo.png", width = 350)
 
     #st.markdown("<h1 style='text-align: center; color: #00447C;'>🦈 SHARKBITE</h1>", unsafe_allow_html=True) # Sea-blue
     st.markdown("<h3 style='text-align: center; font-style: italic; color: #008080;'>🌟 Find Clean Energy Funding & Incentives That Work For Your Project</h3>", unsafe_allow_html=True)
