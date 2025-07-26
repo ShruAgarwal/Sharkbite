@@ -11,9 +11,10 @@ SCREEN_FLOW_MAP_NEW = {
     'unified_intake': (1, "Unified Intake"),
     'solar_battery_calculator': (2, "Solar & Battery Calculator"),
     'incentive_preview': (3, "Incentive Preview"),
-    'reap_deep_dive_documents': (4, "REAP Deep Dive & Docs"), # Adapting old S4
-    'final_incentive_dashboard': (5, "Final Financial Dashboard"), # Adapting old S7
-    'export_package': (6, "Export Package") # Adapting old S8
+    'reap_deep_dive': (4, "REAP Deep Dive"),
+    'multi_grant_stacker': (5, "Multi-Grant Stacker"),
+    'final_incentive_dashboard': (6, "Financial Dashboard"), # Adapting old S7
+    'export_package': (7, "Export Package") # Adapting old S8
 }
 
 

@@ -1,31 +1,32 @@
 import streamlit as st
-#import pandas as pd  # If needed for displaying tables
 from sharkbite_engine.utils import (
-    BASE_ITC_RATE, MOCK_NON_REAP_INCENTIVES_PREVIEW, calculate_simplified_reap_score,
-    ELIGIBILITY_CHECKS_UNIFIED_INTAKE, # For rural/energy community checks
-    REAP_GRANT_CAPS_BY_TECH,
-    generate_progress_bar_markdown
-    # ... import functions for DETAILED MACRS and Order of Operations for Screen 5 later
+    calculate_detailed_reap_score,
+    generate_progress_bar_markdown,
+    check_incentive_eligibility,
+    perform_final_incentive_stack_calculations # The master calculator for Screen 6
 )
 from sharkbite_engine.ui_unified_intake_screen import SCREEN_FLOW_MAP_NEW
+from sharkbite_engine.incentive_definitions import INCENTIVE_PROGRAMS
+
+
+# --- Helper Function to Navigate ---
+def set_screen_and_rerun(screen_name):
+    st.session_state.current_screen = screen_name
+    st.rerun()
 
 
 # ========== Screen 3: Incentive Preview ==========
 def display_incentive_preview_screen():
     st.title("🎁 Incentive Preview (New S3)")
-    st.markdown("""Based on your initial inputs, here's a high-level look at potential incentives.
-                Let's dive deeper to find out exactly how much you could save!""")
+    st.markdown("Based on your initial inputs, here are the grant, loan, and tax programs you may be eligible for. Select which ones you'd like to model in the next step.")
     progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'incentive_preview')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
     st.markdown("---")
 
     form_data = st.session_state.form_data
-    # calculator_financials are the results from Screen 2's simplified calculations
     calculator_financials = st.session_state.get("calculator_results_display", {}).get("financials", {})
 
-
     st.subheader("👀 Summary from Solar & Battery Calculator")
-    # ... (Display key metrics from calculator_financials as in previous response) ...
     col_rev1, col_rev2 = st.columns(2)
     with col_rev1:
         st.metric("Calculator System Size", f"{form_data.get('calculator_refined_system_size_kw', 'N/A')} kW")
@@ -34,52 +35,58 @@ def display_incentive_preview_screen():
         st.metric("Calculator Est. Annual Savings", f"${calculator_financials.get('annual_savings_calculator', 'N/A'):,.0f}")
         st.metric("Calculator Est. Net Cost", f"${calculator_financials.get('net_cost_calculator', 'N/A'):,.0f}")
 
-
-    st.subheader("Potential Additional Incentives to Explore")
-    # ... (Display potential for ITC, REAP using simplified score, State/Utility, MACRS as in previous response) ...
-    st.write(f"- **Federal ITC:** Up to {BASE_ITC_RATE*100:.0f}% of system cost, plus potential bonuses.")
+    with st.spinner("Checking your eligibility for dozens of programs..."):
+        eligible_programs = check_incentive_eligibility(form_data)
+        st.session_state.eligible_programs = eligible_programs
     
-    zip_for_check = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5]
-    is_rural_mock_val = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("rural") > 0
-    is_ec_mock_val = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("energy community") > 0
+    st.subheader("⭐ Potentially Eligible Programs")
+    st.caption("Select the incentives you wish to include in your final financial model 👇")
 
-    # Simplified REAP Score Preview (using data from form_data, some might be defaults)
-    reap_preview_inputs = {
-        "q7_reap_funding_history": form_data.get("reap_funding_history_s1", "First-time applicant"), # Default if not collected yet
-        "q4_ghg_emissions_toggle": form_data.get("q4_ghg_emissions", True), # Default
-        "q2_project_type_reap_for_scoring": "Renewable Energy System (RES)" if form_data.get("calculator_refined_system_size_kw",0)>0 else "Energy Efficiency Improvement (EEI)",
-        "q3_primary_technology_for_scoring": "Solar PV" # Usually Solar PV from calculator
-    }
-    _, _, reap_norm_score, _ = calculate_simplified_reap_score(reap_preview_inputs, is_rural_mock_val, is_ec_mock_val, 0)
-    st.write(f"- **USDA REAP Grant:** Potential eligibility (Preview Score: {reap_norm_score}/100).")
-    st.write("- **State & Utility Rebates:** Varies by location.")
-    st.write("- **Accelerated Depreciation (MACRS):** Significant tax benefits for businesses (detailed calculation next).")
+    if not eligible_programs:
+        st.warning("Based on your initial inputs, no specific grant programs were matched. You can still proceed to model federal tax credits.")
+        st.session_state.incentives_to_model = []
+    
+    with st.form("incentive_selection_form"):
+        selected_incentives = []
+        for program in INCENTIVE_PROGRAMS: # Loop through all to maintain order
+            is_eligible = program['id'] in [p['id'] for p in eligible_programs]
+            
+            # Default to True if it's a core federal incentive and eligible
+            default_selection = is_eligible and program['id'] in ['usda_reap_grant', 'itc_macrs']
+            
+            # Use a checkbox; disable if not eligible
+            is_selected = st.checkbox(
+                f"**{program['name']}** ({program['level']} {program['type']})",
+                value=default_selection,
+                key=f"select_{program['id']}",
+                disabled=not is_eligible
+            )
+            if is_selected:
+                selected_incentives.append(program['id'])
+        
+        submitted = st.form_submit_button("Continue with Selected Incentives ➡️", type="primary")
+        if submitted:
+            st.session_state.incentives_to_model = selected_incentives
+            # Pre-fill data for next screen
+            calculator_financials = st.session_state.get("calculator_results_display", {}).get("financials", {})
+            form_data['q1_biz_structure'] = form_data.get("unified_business_type")
+            form_data['address_for_reap'] = form_data.get("unified_address_zip")
+            form_data['system_cost_for_reap'] = calculator_financials.get("total_cost_with_battery")
+            form_data['system_size_for_reap'] = form_data.get("calculator_refined_system_size_kw")
+            form_data['technology_for_reap'] = "Solar PV" # Assuming from calculator context
+            set_screen_and_rerun("reap_deep_dive")
 
     st.markdown("---")
-    st.warning("The figures above are high-level. The next steps will refine these based on detailed eligibility and accurate financial modeling.", icon="💡")
-
-    nav_col1, nav_col2 = st.columns(2)
-    with nav_col1:
-        if st.button("⬅️ Back to Solar & Battery Calculator", use_container_width=True, key="s3_back_to_s2"):
-            return "solar_battery_calculator"
-    with nav_col2:
-        if st.button("Unlock Full Incentive Package (REAP Deep Dive) ➡️", type="primary", use_container_width=True, key="s3_to_s4_continue"):
-            # Pre-fill form_data for REAP intake (New Screen 4)
-            form_data['q1_biz_structure'] = form_data.get("unified_business_type") # From S1
-            form_data['address_for_reap'] = form_data.get("unified_address_zip") # From S1
-            form_data['system_cost_for_reap'] = calculator_financials.get("total_cost_with_battery") # From S2
-            form_data['system_size_for_reap'] = form_data.get("calculator_refined_system_size_kw") # From S2
-            form_data['technology_for_reap'] = "Solar PV" # Assuming this from calculator context for now
-            # ... other necessary pre-fills ...
-            return "reap_deep_dive_documents" # New Screen 4
+    if st.button("⬅️ Back to Solar & Battery Calculator", use_container_width=True, key="s3_back_to_s2_final"):
+        set_screen_and_rerun("solar_battery_calculator")
     return None
 
 
-# ========== Screen 4: REAP Deep Dive & Document Upload ==========
+# ========== Screen 4: REAP Deep Dive ==========
 def display_reap_deep_dive_screen():
-    st.title("📝 REAP Grant Application & Document Upload (New S4)")
-    st.markdown("Provide detailed information for your REAP Grant application and upload necessary documents.")
-    progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'reap_deep_dive_documents')
+    st.title("📊 REAP Score Preview & Document Simulation (New S4)")
+    st.markdown("Confirm your REAP eligibility details and see your live score update. A higher score increases funding chances.")
+    progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'reap_deep_dive')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
     st.markdown("---")
     
@@ -91,218 +98,251 @@ def display_reap_deep_dive_screen():
     st.write(f"System Size: {form_data.get('system_size_for_reap', 'N/A')} kW")
     st.write(f"Estimated Project Cost (CapEx): ${form_data.get('system_cost_for_reap', 0):,.0f}")
 
-    # === HERE WE WOULD INTEGRATE OUR ORIGINAL REAP INTAKE FORM UI ===
-    # Collect all inputs needed for the simplified REAP score from "FORMULAS" PDF.
-    # --- ADDED: REAP-SPECIFIC INPUTS (from old wireframe screens) ---
+    # === Collect all inputs needed for the simplified REAP score ===
+    #reap_tab1, reap_tab2 = st.columns([5, 3], gap="small")
     st.subheader("REAP Eligibility Details")
+    with st.container(border=True):
+        reap_col1, reap_col2 = st.columns(2)
+        with reap_col1:
+            form_data['reap_business_name'] = st.text_input(
+            "Official Business Name for REAP Application",
+            value=form_data.get('unified_business_type', 'N/A'), # Pre-fill from S1
+            key="s4_reap_biz_name"
+        )
+            
+            # Note: Project Type and Technology are largely pre-filled from calculator
+            # But we can allow confirmation or specification here if needed
+            project_type_options = ["Renewable Energy System (RES)", "Energy Efficiency Improvement (EEI)", "Combined RES + EEI"]
+            current_proj_type = form_data.get("q2_project_type_reap", project_type_options[0]) # Default to RES from calc
+            form_data["q2_project_type_reap"] = st.selectbox(
+                "Confirm REAP Project Type:",
+                options=project_type_options,
+                index=project_type_options.index(current_proj_type),
+                key="s4_reap_proj_type",
+                help="Confirm the category your project falls under for REAP."
+            )
 
-    reap_col1, reap_col2 = st.columns(2)
-    with reap_col1:
-        # These inputs are needed for the simplified REAP scoring formula
-        reap_history_options = ["First-time applicant", "Prior award (2+ years ago)", "Recent award (last 2 years)"]
-        current_reap_history = form_data.get("q7_reap_funding_history", reap_history_options[0])
-        form_data["q7_reap_funding_history"] = st.radio(
-            "Have you received REAP funding before?",
-            options=reap_history_options,
-            index=reap_history_options.index(current_reap_history),
-            key="s4_reap_history", horizontal=True,
-            help="First-time applicants are prioritized for REAP scoring."
+        with reap_col2:
+            reap_tech_options = ["Solar PV", "Wind Turbine", "Anaerobic Digester", "Geothermal", "Battery Storage (with solar)", "Lighting / HVAC Upgrade", "Other"]
+            # Pre-fill with a reasonable default from the calculator context
+            default_tech_for_reap = "Solar PV" if "solar" in form_data.get('technology_for_reap', '').lower() else reap_tech_options[0]
+            current_reap_tech = form_data.get('reap_specific_technology', default_tech_for_reap)
+            form_data['reap_specific_technology'] = st.selectbox(
+                "Confirm Primary Technology for REAP",
+                options=reap_tech_options,
+                index=reap_tech_options.index(current_reap_tech) if current_reap_tech in reap_tech_options else 0,
+                key="s4_reap_tech_select",
+                help="The technology type can affect REAP grant caps and scoring."
+            )
+
+            reap_history_options = ["First-time applicant", "Prior award (2+ years ago)", "Recent award (last 2 years)"]
+            current_reap_history = form_data.get("q7_reap_funding_history", reap_history_options[0])
+            form_data["q7_reap_funding_history"] = st.radio(
+                "Have you received REAP funding before?",
+                options=reap_history_options,
+                index=reap_history_options.index(current_reap_history),
+                key="s4_reap_history", horizontal=True,
+                help="First-time applicants are prioritized for REAP scoring."
+            )
+        
+        form_data["q4_ghg_emissions"] = st.toggle(
+            "Does this project result in zero GHG emissions?",
+            value=form_data.get("q4_ghg_emissions", True),
+            key="s4_ghg_toggle",
+            help="Zero-emissions projects get a scoring bonus."
         )
 
-    with reap_col2:
-        # Note: Project Type and Technology are largely pre-filled from calculator
-        # But we can allow confirmation or specification here if needed
-        project_type_options = ["Renewable Energy System (RES)", "Energy Efficiency Improvement (EEI)", "Combined RES + EEI"]
-        current_proj_type = form_data.get("q2_project_type_reap", project_type_options[0]) # Default to RES from calc
-        form_data["q2_project_type_reap"] = st.selectbox(
-            "Confirm REAP Project Type:",
-            options=project_type_options,
-            index=project_type_options.index(current_proj_type),
-            key="s4_reap_proj_type",
-            help="Confirm the category your project falls under for REAP."
-        )
-    
-    form_data["q4_ghg_emissions"] = st.toggle(
-        "Does this project result in zero GHG emissions?",
-        value=form_data.get("q4_ghg_emissions", True),
-        key="s4_ghg_toggle",
-        help="Zero-emissions projects get a scoring bonus."
-    )
-    
-    st.subheader("Document Upload (Simulated for Week 2)")
-    st.info("TODO: Implement full REAP intake form and document upload simulation here.")
-    
-    # Mock doc score for now
-    form_data['mock_doc_score_reap'] = st.slider("Simulate Document Score (0-20 pts)", 0, 20, 10, key="s4_doc_score_slider")
+        #st.subheader("Document Upload Simulation")
+        
+        form_data['mock_doc_score_reap'] = st.slider("Simulate Document Score (0-20 pts)", 0, 20, 10,
+                                                    key="s4_doc_score_slider_live",
+                                                    help="This simulates the points awarded for having documents like audits, permits, and deeds ready."
+                                                    )
+        st.info("👇 Your REAP score is affected by the completeness of your documentation.")
+   
+    #st.markdown('---')
+    st.subheader("Live REAP Score Preview")
+    with st.container(border=True):
+
+        # Use data directly from form_data which is being updated live by widgets
+        reap_score_raw, breakdown, normalized_score = calculate_detailed_reap_score(form_data)
+        # Store for the next screen
+        st.session_state.form_data['final_reap_score_for_dashboard'] = reap_score_raw
+
+        # Display score with progress bar
+        st.metric("Current Estimated Score", f"{normalized_score} / 100")
+        st.progress(normalized_score / 100)
+        st.caption(f"Competitive Threshold: 75+")
+        
+        # Display score breakdown
+        with st.expander("View Score Breakdown"):
+            for detail in breakdown:
+                st.markdown(f"- {detail}")
 
     st.markdown("---")
     nav_col1, nav_col2 = st.columns(2)
     with nav_col1:
-        if st.button("⬅️ Back to Incentive Preview", use_container_width=True, key="s4_back_to_s3"):
-            return "incentive_preview"
+        if st.button("⬅️ Back to Incentive Preview", use_container_width=True, key="s4_back_to_s3_reap_final"):
+            set_screen_and_rerun("incentive_preview")
     with nav_col2:
-        if st.button("Continue to Final Financial Dashboard ➡️", type="primary", use_container_width=True, key="s4_to_s5_continue"):
-            # Recalculate REAP score with potentially new inputs from this screen
-            zip_for_check = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5]
-            is_rural = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("rural") > 0
-            is_ec = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("energy community") > 0
-            
-            reap_score_final, _, _, _ = calculate_simplified_reap_score(
-                form_data, is_rural, is_ec, form_data.get('mock_doc_score_reap', 0)
-            )
-            form_data['final_reap_score_for_dashboard'] = reap_score_final
-            
-            # Calculate REAP Grant Amount
-            system_cost_for_reap = form_data.get("reap_specific_capex", form_data.get('calculator_system_cost_output', 0))
-            tech_for_reap = form_data.get("q2_project_type_reap", "Renewable Energy System (RES)")
-            max_cap = REAP_GRANT_CAPS_BY_TECH.get(tech_for_reap, 500000)
-            form_data['reap_grant_amount_calculated'] = min(0.5 * system_cost_for_reap, max_cap)
-
-
-
-            # is_rural = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(form_data.get('address_for_reap','').split(',')[-1].strip()[:5], {}).get("text", "").lower().count("rural") > 0
-            # is_ec = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(form_data.get('address_for_reap','').split(',')[-1].strip()[:5], {}).get("text", "").lower().count("energy community") > 0
-            
-            # reap_score_final, _, _, _ = calculate_simplified_reap_score(
-            #     form_data, # Pass the full form_data which now includes REAP specific answers
-            #     is_rural, is_ec,
-            #     form_data.get('mock_doc_score_reap', 0)
-            # )
-            # form_data['final_reap_score_for_dashboard'] = reap_score_final
-            
-            # # Calculate REAP Grant Amount (using formula from "Formulas" PDF)
-            # # final_grant = min(0.5 * system_cost, max_cap_by_tech[technology])
-            # system_cost_for_reap_grant = form_data.get('system_cost_for_reap', 0)
-            # tech_for_reap_grant = form_data.get('technology_for_reap', "Other") # Use a default if not specific
-            
-            # max_cap = REAP_GRANT_CAPS_BY_TECH.get(tech_for_reap_grant, REAP_GRANT_CAPS_BY_TECH["Other"])
-            # form_data['reap_grant_amount_calculated'] = min(0.5 * system_cost_for_reap_grant, max_cap)
-
-            return "final_incentive_dashboard" # New Screen 5
+        if st.button("Continue to Multi-Grant Stacker ➡️", type="primary", use_container_width=True, key="s4_to_s5_new"):
+            set_screen_and_rerun("multi_grant_stacker") # New Screen 5
     return None
 
 
-# ========== Screen 5: Final Incentive Dashboard (Detailed MACRS, Order of Ops) ==========
-def display_final_incentive_dashboard_screen():
-    st.title("💵 Final Incentive Dashboard (New S5)")
-    st.markdown("Full financial picture using **detailed MACRS** and precise incentive calculations following the **Sharkbite Order of Operations**.")
-    progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'final_incentive_dashboard')
+# ========== Screen 5: Multi-Grant Stacker ==========
+def display_multi_grant_stack_screen():
+    st.title("💰 Multi-Grant & Incentive Stacker (New S5)")
+    st.markdown("Please provide the specific details needed for each of your selected incentive programs.")
+    progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'multi_grant_stacker')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
     st.markdown("---")
 
     form_data = st.session_state.form_data
-    # calculator_financials = st.session_state.get("calculator_financials_results", {}) # From S2 (simplified)
+    incentives_to_model_ids = st.session_state.get("incentives_to_model", [])
+    other_programs_to_model = [p for p in INCENTIVE_PROGRAMS if p['id'] in incentives_to_model_ids and p['id'] not in ['usda_reap_grant', 'itc_macrs'] and p.get("calculation_inputs")]
 
-    st.subheader("Key Project & Financial Data (Recap & Refined)")
-    total_project_cost = form_data.get('system_cost_for_reap', 0) # This is CapEx from Calculator
-    st.write(f"**Total Project Cost (CapEx):** ${total_project_cost:,.0f}")
-    
-    # --- Apply Sharkbite Order of Operations ---
-    # Step 1: CapEx (already have total_project_cost)
-
-    # Step 2: REAP Grant Amount (already calculated when moving from S4)
-    reap_grant_calculated = form_data.get('reap_grant_amount_calculated', 0)
-    st.write(f"**1. Calculated REAP Grant:** ${reap_grant_calculated:,.0f}")
-
-    # Step 3: Calculate ITC (based on full gross project cost, before REAP)
-    # ITC = 30% * CapEx (plus bonuses)
-    #base_itc_on_capex = total_project_cost * BASE_ITC_RATE # BASE_ITC_RATE = 0.30
-    
-    # Add ITC Bonuses (Energy Community, etc. - based on ZIP and other factors)
-    # These bonus percentages would come from a more detailed config or direct user selection
-    # For now, using mock potential from utils
-    total_itc_bonus_rate = 0
-    zip_for_check = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5] # From S1
-    is_ec_mock_val = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("energy community") > 0
-    if is_ec_mock_val:
-        total_itc_bonus_rate += MOCK_NON_REAP_INCENTIVES_PREVIEW.get("bonus_energy_community_potential",0)
-    # Add other bonuses here if applicable (e.g. Domestic Content - future)
-    
-    total_itc_value = (BASE_ITC_RATE + total_itc_bonus_rate) * total_project_cost
-    st.write(f"**2. Calculated Total ITC (incl. bonuses):** ${total_itc_value:,.0f} (Rate: {(BASE_ITC_RATE + total_itc_bonus_rate)*100:.0f}%)")
-
-    # Step 4: Federal Share Compliance Check
-    federal_share = (reap_grant_calculated + total_itc_value) / total_project_cost if total_project_cost > 0 else 0
-    st.write(f"**3. Federal Share Check:** {federal_share:.2%} (Target: <= 50%)")
-    if federal_share > 0.50:
-        st.error(f"🚨 AI WARNING: Federal share ({federal_share:.2%}) exceeds 50%! You may need to reduce REAP grant request or forgo some ITC bonuses to be compliant.", icon="⚖️")
-        # TODO WEEK 2: Add logic for user to adjust REAP or ITC bonuses here
-        st.write("Action: For this demo, assuming user reduces REAP to meet cap if needed.")
-        # Corrected REAP if over cap (simplified correction for demo)
-        if federal_share > 0.50:
-            max_allowed_reap_plus_itc = 0.50 * total_project_cost
-            adjusted_reap_grant = max(0, max_allowed_reap_plus_itc - total_itc_value)
-            if adjusted_reap_grant < reap_grant_calculated:
-                st.warning(f"REAP Grant adjusted from ${reap_grant_calculated:,.0f} to ${adjusted_reap_grant:,.0f} to meet 50% Federal Share Cap.", icon="🔧")
-                reap_grant_calculated = adjusted_reap_grant
-                federal_share = (reap_grant_calculated + total_itc_value) / total_project_cost if total_project_cost > 0 else 0
-                st.write(f"   New Federal Share: {federal_share:.2%}")
+    with st.form("multi_grant_form"):
+         
+        if not other_programs_to_model:
+            st.info("No additional grant programs were selected to model. You can proceed directly to the final summary.")
+        else:
+            st.subheader("Details for Additional Selected Programs")
+            for program in other_programs_to_model:
+                with st.container(border=True):
+                    st.markdown(f"**Inputs for: {program['name']}**")
+                    for inp in program["calculation_inputs"]:
+                        input_key = f"{program['id']}_{inp['id']}"
+                        default_value = form_data.get(input_key, inp.get('value', 0.0))
+                        
+                        if inp['type'] == "number_input":
+                            form_data[input_key] = st.number_input(inp['label'], value=float(default_value), key=input_key)
+                        elif inp['type'] == "slider":
+                            form_data[input_key] = st.slider(inp['label'], min_value=inp['min'], max_value=inp['max'], value=int(default_value), key=input_key)
+            
+        submitted = st.form_submit_button("Continue to Final Financial Dashboard ➡️", type="primary")
+        if submitted:
+            set_screen_and_rerun("final_incentive_dashboard")
 
 
-    # Step 5: Calculate Correct Depreciable Basis
-    itc_basis_reduction_amount = 0.5 * total_itc_value
-    correct_depreciable_basis = total_project_cost - itc_basis_reduction_amount
-    st.write(f"**4. Correct Depreciable Basis (after ITC reduction):** ${correct_depreciable_basis:,.0f}")
-
-    # Step 6: Apply MACRS and Bonus Depreciation (DETAILED - TODO FOR WEEK 2)
-    st.subheader("Detailed Depreciation Benefits (Week 2 Implementation)")
-    st.write(f"   - Depreciable Basis for MACRS: ${correct_depreciable_basis:,.0f}")
-    
-    # ToDo WEEK 2: Implement 5-year MACRS schedule + Bonus Depreciation logic here
-    # For now, use a placeholder or the simplified one for display continuity
-    #macrs_year1_detailed_placeholder = correct_depreciable_basis * 0.20 # Example for 5yr MACRS Y1 (no bonus)
-    bonus_dep_rate_for_current_year = 0.80 # Example for 2023, needs to be dynamic
-    bonus_dep_value_placeholder = correct_depreciable_basis * bonus_dep_rate_for_current_year
-    remaining_basis_for_macrs = correct_depreciable_basis - bonus_dep_value_placeholder
-    macrs_year1_after_bonus_placeholder = remaining_basis_for_macrs * 0.20 # MACRS on remaining
-    total_year1_depreciation_benefit_placeholder = (bonus_dep_value_placeholder + macrs_year1_after_bonus_placeholder) * 0.21 # Assuming 21% tax rate
-
-    st.write(f"   - *Placeholder* Year 1 Bonus Dep. Value (@{bonus_dep_rate_for_current_year*100}%): ${bonus_dep_value_placeholder:,.0f}")
-    st.write(f"   - *Placeholder* Year 1 MACRS Value (on remaining): ${macrs_year1_after_bonus_placeholder:,.0f}")
-    st.write(f"   - *Placeholder* Year 1 Total Depreciation Tax Benefit: ${total_year1_depreciation_benefit_placeholder:,.0f}")
-    form_data['final_year1_depreciation_benefit'] = total_year1_depreciation_benefit_placeholder # Store for summary
-
-
-    # --- Final Summary Metrics using detailed calculations ---
-    st.subheader("Final Financial Summary")
-    # Net Cost = CapEx - REAP - ITC - Year 1 Dep Benefit (if user type is commercial)
-    net_cost_final = total_project_cost - reap_grant_calculated - total_itc_value
-    if form_data.get("unified_business_type") == "Commercial / Business":
-        net_cost_final -= total_year1_depreciation_benefit_placeholder # Subtracting the tax *benefit*
-    
-    annual_savings_final = st.session_state.get("calculator_results_display", {}).get("financials", {}).get('annual_savings_calculator',0) # From S2 calculator
-    
-    roi_final = (annual_savings_final / net_cost_final) * 100 if net_cost_final > 0 else float('inf') if annual_savings_final > 0 else 0
-    payback_final = net_cost_final / annual_savings_final if annual_savings_final > 0 else float('inf')
-
-    # fin_col1, fin_col2, fin_col3 = st.columns(3)
-    # fin_col1.metric("Final Net Project Cost (after all incentives)", f"${net_cost_final:,.0f}")
-    # fin_col2.metric("Final ROI (Simple)", f"{roi_final:.1f}%")
-    # fin_col3.metric("Final Payback (Years)", f"{payback_final:.1f}" if payback_final != float('inf') else "N/A")
-    st.metric("Final Net Project Cost (after all incentives)", f"${net_cost_final:,.0f}")
-    st.metric("Final ROI (Simple)", f"{roi_final:.1f}%")
-    st.metric("Final Payback (Years)", f"{payback_final:.1f}" if payback_final != float('inf') else "N/A")
-
+    # Navigation
     st.markdown("---")
-    nav_col1, nav_col2 = st.columns(2)
-    with nav_col1:
-        if st.button("⬅️ Back to REAP Deep Dive", use_container_width=True, key="s5_back_to_s4"):
-            return "reap_deep_dive_documents"
-    with nav_col2:
-        if st.button("Continue to Export Package ➡️", type="primary", use_container_width=True, key="s5_to_s6_continue"):
-            return "export_package"
+    if st.button("⬅️ Back to REAP Deep Dive", use_container_width=True, key="s5_back_to_s4_final"):
+        set_screen_and_rerun("reap_deep_dive")
+
     return None
 
 
-# ========== Screen 6: Export Package ==========
+# ========== Screen 6: Final Incentive Dashboard (Now reads pre-calculated results) ==========
+def display_final_incentive_dashboard_screen():
+    st.title("💵 Final Incentive Dashboard (New S6)")
+    st.markdown("This is your consolidated financial summary, incorporating all selected and calculated incentives based on the **Sharkbite Order of Operations**.")
+    progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'final_incentive_dashboard')
+    st.markdown(progress_bar_md, unsafe_allow_html=True)
+    st.markdown("---")
+    
+    form_data = st.session_state.form_data
+    
+    # --- Performs all the master calculations directly on this screen when it loads ---
+    with st.spinner("Performing final compliance checks and financial modeling..."):
+        final_results = perform_final_incentive_stack_calculations(form_data)
+        # Store results in session state in case we need them on the export screen
+        st.session_state.final_financial_results = final_results
+
+    if not final_results:
+        st.error("Financial results have not been calculated. Please complete the 'Multi-Grant Stacker' step.")
+        if st.button("⬅️ Go Back", key="s6_back_no_results"):
+            set_screen_and_rerun("multi_grant_stacker")
+        return None
+
+    # Displaying the results from the `final_results` dictionary
+    st.subheader("✅ Final Compliant Incentive Stack Summary")
+    
+    with st.container(border=True):
+        st.write(f"**Total Project Cost (CapEx):** ${final_results.get('total_project_cost', 0):,.2f}")
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("🏆 REAP Grant (Adjusted)", f"${final_results.get('reap_grant_final', 0):,.0f}")
+            st.metric("💰 Federal ITC (Total)", f"${final_results.get('total_itc_value', 0):,.0f}")
+        with col2:
+            st.metric("📉 MACRS + Bonus Dep. (Y1 Tax Benefit)", f"${final_results.get('year_1_depreciation_tax_benefit', 0):,.0f}" if final_results.get('year_1_depreciation_tax_benefit',0) > 0 else "N/A")
+            st.metric("💵 Total Benefits (Year 1)", f"${final_results.get('total_grant_and_tax_benefits', 0):,.0f}")
+        
+        if not final_results.get("is_fed_share_compliant"):
+            st.error(f"🚨 Federal Share Warning: The initial REAP Grant was reduced to comply with the 50% federal share limit. The final compliant grant is reflected above.", icon="⚖️")
+
+    other_grants = final_results.get("other_grant_values", {})
+    if other_grants:
+        st.subheader("Other State & Federal Program Benefits")
+        with st.container(border=True):
+            # Display other grants in columns for better layout
+            num_other_grants = len(other_grants)
+            other_cols = st.columns(num_other_grants if num_other_grants > 0 else 1)
+            for i, (name, value) in enumerate(other_grants.items()):
+                with other_cols[i % num_other_grants]:
+                    st.metric(label=name, value=f"${value:,.0f}" if isinstance(value, (int, float)) else str(value))
+
+    st.subheader("Final Project Financials")
+    with st.container(border=True):
+        fin_col1, fin_col2, fin_col3 = st.columns(3)
+        
+        net_cost_final = final_results.get('final_net_cost', 0)
+        final_roi = final_results.get('final_roi', 0)
+        final_payback = final_results.get('final_payback', float('inf'))
+        cash_positive_note = final_results.get('cash_positive_note', "")
+
+        # Final Net Cost
+        # Show $0 if it's negative, because you don't have a "negative cost" in reality, you have positive cashflow.
+        display_net_cost = max(0, net_cost_final)
+        fin_col1.metric("💸 Final Net Project Cost (Y1)", f"${display_net_cost:,.0f}")
+        
+        # Final ROI
+        if final_roi == float('inf'):
+            roi_display_text = "Immediate"
+            fin_col2.metric("🤑 Final ROI (Simple)", roi_display_text)
+        else:
+            roi_display_text = f"{final_roi:.1f}%"
+            fin_col2.metric("🤑 Final ROI (Simple)", roi_display_text)
+
+        # Final Payback
+        if final_payback == 0.0:
+            payback_display_text = "Immediate"
+            fin_col3.metric("⏱️ Final Payback (Years)", payback_display_text)
+        elif final_payback == float('inf'):
+            payback_display_text = "N/A (No Savings)"
+            fin_col3.metric("⏱️ Final Payback (Years)", payback_display_text)
+        else:
+            payback_display_text = f"{final_payback:.1f}"
+            fin_col3.metric("⏱️ Final Payback (Years)", payback_display_text)
+
+        # If there's a cash positive note, display it prominently
+        if cash_positive_note:
+            st.success(f"🎉 **Excellent Outcome:** {cash_positive_note}", icon="💰")
+    
+    # Navigation
+    st.markdown("---")
+    nav_col1, nav_col2 = st.columns(2)
+    with nav_col1:
+        if st.button("⬅️ Back to Multi-Grant Stacker", use_container_width=True, key="s6_back_to_s5_final"):
+            set_screen_and_rerun("multi_grant_stacker")
+    with nav_col2:
+        if st.button("Continue to Export Package ➡️", type="primary", use_container_width=True, key="s6_to_s7_continue"):
+            set_screen_and_rerun("export_package")
+
+    return None
+
+
+# ========== Screen 7: Export Package ==========
 def display_export_package_screen():
-    st.title("📤 Export Package (New S6)")
+    st.title("📤 Export Package (New S7)")
     st.markdown("Download your customized project package.")
     progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'export_package')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
     st.markdown("---")
     
-    st.info("TODO WEEK 3: Implement PDF/document generation and download/email functionality here.")
+    st.info("📌 TODO WEEK 3: Implement PDF/document generation and download/email functionality here.")
     # Display key summary numbers again if helpful
     
     st.download_button(
@@ -315,10 +355,10 @@ def display_export_package_screen():
     st.markdown("---")
     nav_col1, nav_col2 = st.columns(2)
     with nav_col1:
-        if st.button("⬅️ Back to Final Dashboard", use_container_width=True, key="s6_back_to_s5"):
+        if st.button("⬅️ Back to Final Dashboard", use_container_width=True, key="s7_back_to_s6_final"):
             return "final_incentive_dashboard"
     with nav_col2:
-        if st.button("🎉 Start New Project / Home", type="primary", use_container_width=True, key="s6_finish_home"):
+        if st.button("🎉 Start New Project / Home", type="primary", use_container_width=True, key="s7_finish_home"):
             # Clear relevant session state for a new project
             st.session_state.form_data = {}
             st.session_state.calculator_results_display = None

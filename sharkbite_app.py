@@ -6,6 +6,7 @@ from sharkbite_engine.ui_calculator_screen import display_solar_battery_calculat
 from sharkbite_engine.ui_reap_flow_screens import (
     display_incentive_preview_screen,
     display_reap_deep_dive_screen,
+    display_multi_grant_stack_screen,
     display_final_incentive_dashboard_screen,
     display_export_package_screen
 )
@@ -72,7 +73,7 @@ def display_welcome_logged_in():
             st.toast("Feature to load saved projects coming soon!", icon="⏳")
 
 
-# ====== Main App Router for New 6-Screen Flow ======
+# ====== Main App Router for New Screen Flow ======
 if __name__ == "__main__":
 
     if not st.session_state.logged_in:
@@ -124,7 +125,7 @@ if __name__ == "__main__":
             st.rerun()
 
 
-    # --- Centralized API Call Logic for Calculator Screen (S2) ---
+    # --- Centralized API Call Logic for Calculator Screen 2 ---
     if st.session_state.get("trigger_calculator_api_processing", False):
         st.session_state.trigger_calculator_api_processing = False # Consume signal
         
@@ -146,7 +147,7 @@ if __name__ == "__main__":
         st.rerun() # Rerun to display results on the same screen
 
 
-    # --- Screen Routing for logged-in users adapting to new 6-screen flow ---
+    # --- Screen Routing for logged-in users adapting to new screen flow ---
     current_screen = st.session_state.current_screen
     next_screen_signal = None # To capture navigation requests from UI functions
 
@@ -172,9 +173,15 @@ if __name__ == "__main__":
         if next_screen_signal:
             st.session_state.current_screen = next_screen_signal
             st.rerun()
-
-    elif current_screen == 'reap_deep_dive_documents':
+    
+    elif current_screen == 'reap_deep_dive':
         next_screen_signal = display_reap_deep_dive_screen()
+        if next_screen_signal:
+            st.session_state.current_screen = next_screen_signal
+            st.rerun()
+
+    elif current_screen == 'multi_grant_stacker':
+        next_screen_signal = display_multi_grant_stack_screen()
         if next_screen_signal:
             st.session_state.current_screen = next_screen_signal
             st.rerun()
