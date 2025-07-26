@@ -80,5 +80,10 @@ Sharkbite/
 ├── sharkbite_app.py                 # Streamlit App
 ├── requirements.txt                 # Project dependencies
 ├── .gitignore                       # Files/dependencies to ignore
+<<<<<<< HEAD
 └── README.md                        # About the project & general instructions
 ```
+=======
+└── README.md                         # About the project & general instructions
+```
+>>>>>>> 1049a585a687c48625f80189954372a1ec2368f0
