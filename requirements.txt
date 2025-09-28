@@ -1,2 +1,6 @@
-streamlit
-pandas
+streamlit==1.46.0
+numpy==2.3.0
+pandas==2.3.0
+boto3==1.40.40
+matplotlib==3.10.6
+plotly==6.3.0

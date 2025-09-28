@@ -1,17 +1,15 @@
 import streamlit as st
 from sharkbite_engine.utils import (
-    AI_HELPER_TEXTS_UNIFIED_INTAKE, ELIGIBILITY_CHECKS_UNIFIED_INTAKE,
-    generate_progress_bar_markdown
+    SPECIFIC_YIELD_RULE_OF_THUMB, AI_HELPER_TEXTS_UNIFIED_INTAKE,
+    ELIGIBILITY_CHECKS_UNIFIED_INTAKE, generate_progress_bar_markdown
 )
-from sharkbite_engine.solar_calculator_logic import calculate_solar_system_size_from_usage
 
-
-# ---- Screen Flow Map for progress bar ----
+# ---- Screen Flow Map for User Journey (progress bar) ----
 SCREEN_FLOW_MAP_NEW = {
     'unified_intake': (1, "Unified Intake"),
     'solar_battery_calculator': (2, "Solar & Battery Calculator"),
     'incentive_preview': (3, "Incentive Preview"),
-    'reap_deep_dive': (4, "REAP Deep Dive"),
+    'reap_deep_dive': (4, "REAP Deep Dive"), # Adapting old S4
     'multi_grant_stacker': (5, "Multi-Grant Stacker"),
     'final_incentive_dashboard': (6, "Financial Dashboard"), # Adapting old S7
     'export_package': (7, "Export Package") # Adapting old S8
@@ -27,7 +25,7 @@ def display_unified_intake_screen():
 
     form_data = st.session_state.form_data
 
-    # These are stored in st.session_state.form_data for use by subsequent screens
+    # These are stored in `st.session_state.form_data` for use by subsequent screens
     form_data["unified_address_zip"] = st.text_input( # Changed key for clarity
         "📍 Property Address or ZIP Code",
         value=form_data.get("unified_address_zip", ""),
@@ -42,8 +40,7 @@ def display_unified_intake_screen():
     else:
         st.info(zip_hint["text"], icon="💡")
 
-    # Business Type - from the new screen flow ==> "Homeowner, Commercial, Farm, Nonprofit, etc."
-    # This also maps to user_type input
+    # Business Type from the new screen flow -- maps to `user_type` input
     biz_type_options = ["Homeowner", "Commercial / Business", "Farm / Agriculture", "Nonprofit", "Tribal Entity", "Rural Cooperative"]
     current_biz_type = form_data.get("unified_business_type", biz_type_options[0])
     form_data["unified_business_type"] = st.selectbox(
@@ -54,25 +51,65 @@ def display_unified_intake_screen():
         help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("business_type_unified")
     )
 
+    st.subheader("⚡ Your Current Energy Profile")
     col1, col2 = st.columns(2)
     with col1:
         form_data["unified_monthly_kwh"] = st.number_input(
-            "⚡ Avg. Monthly Electricity Usage (kWh)",
+            "Avg. Monthly Electricity Usage (kWh)",
             min_value=0, value=form_data.get("unified_monthly_kwh", 1000), step=50,
             key="s1_unified_monthly_kwh", help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("monthly_kwh_usage")
         )
+        
     with col2:
         form_data["unified_electricity_rate"] = st.number_input(
-            "💲 Current Electricity Rate ($/kWh)",
+            "Current Electricity Rate ($/kWh)",
             min_value=0.0, value=form_data.get("unified_electricity_rate", 0.15), step=0.01, format="%.2f",
             key="s1_unified_elec_rate", help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("electricity_rate")
         )
     
-    if form_data.get("unified_monthly_kwh", 0) > 0:
-        recommended_size = calculate_solar_system_size_from_usage(form_data["unified_monthly_kwh"])
-        st.info(f"Recommended solar system size based on your usage: **{recommended_size:.1f} kW**", icon="📐")
-        form_data["calculator_initial_autosized_kw"] = recommended_size # Store for next screen
+    form_data["avg_monthly_bill"] = st.number_input(
+        "Avg. Monthly Electric Bill ($)", min_value=0,
+        value=form_data.get("avg_monthly_bill", 250), key="s1_avg_bill")  # <--- NEWLY ADDED
 
+    # --- ESTIMATES USAGE & SUGGEST SIZE ---
+    avg_monthly_bill = form_data["avg_monthly_bill"]
+    electricity_rate = form_data["unified_electricity_rate"]
+
+    if electricity_rate > 0:
+        annual_kwh_est = (avg_monthly_bill * 12) / electricity_rate
+        form_data["annual_kwh_est"] = annual_kwh_est   # Store for later
+        st.info(f"Based on your bill and rate, your estimated annual usage is **{annual_kwh_est:,.0f} kWh**.", icon="💡")
+        
+        target_offset = st.slider("Desired Annual Bill Offset (%)", 50, 110, 95, key="s1_target_offset",
+                                  help="What percentage of your usage do you want the solar system to cover?")
+        form_data["target_offset"] = target_offset
+        
+        target_kwh = annual_kwh_est * (target_offset / 100.0)
+        suggested_kw = round(target_kwh / SPECIFIC_YIELD_RULE_OF_THUMB, 1)
+        form_data["calculator_initial_autosized_kw"] = suggested_kw
+        
+        st.success(f"To offset {target_offset}% of your usage, a system size of approximately **{suggested_kw:.1f} kW** is recommended.", icon="📐")
+
+
+    # --- UI Element for Self-Consumption Priority ---
+    st.subheader("Project Optimization Goal")
+    user_type = form_data.get("unified_business_type", "Homeowner")
+    
+    # Default to True for commercial/ag, False for residential
+    default_self_consumption = user_type in ["Commercial / Business", "Farm / Agriculture", "Rural Cooperative"]
+    
+    form_data["self_consumption_priority"] = st.toggle(
+        "Optimize for Self-Consumption (Minimize Grid Export)?",
+        value=form_data.get("self_consumption_priority", default_self_consumption),
+        key="s1_self_consumption_toggle",
+        help="Prioritizes using your own solar/battery power before exporting to the grid. Recommended for areas with low export rates."
+    )
+    if form_data["self_consumption_priority"]:
+        st.info("💡 **Self-Consumption Mode:** The system will be sized to maximize on-site energy use, and savings will primarily come from avoiding grid purchases.", icon="🔋")
+    else:
+        st.info("💡 **Bill Offset Mode:** The system will be sized to offset a percentage of your annual bill, which may involve more grid export.", icon="💸")
+    
+    
     st.markdown("---")
     if st.button("Continue to Solar & Battery Calculator ➡️", type="primary", use_container_width=True, key="s1_to_s2_continue"):
         # Store necessary pre-filled values for calculator screen based on unified intake
@@ -80,5 +117,5 @@ def display_unified_intake_screen():
         form_data["calculator_user_type_from_s1"] = form_data.get("unified_business_type")
         form_data["calculator_monthly_kwh_from_s1"] = form_data.get("unified_monthly_kwh")
         form_data["calculator_elec_rate_from_s1"] = form_data.get("unified_electricity_rate")
-        return True # Signal to main_app to navigate
+        return True # Signals the sharkbite_app to navigate
     return False

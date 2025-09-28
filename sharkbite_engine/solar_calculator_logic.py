@@ -1,11 +1,12 @@
-import streamlit as st
 import requests
-# import pandas as pd
-# import math
+import numpy as np
+import pandas as pd
+import streamlit as st
 from sharkbite_engine.utils import (
-    AVG_SUN_HOURS_FOR_AUTOSIZE, DERATE_FACTOR_FOR_AUTOSIZE,
-    SOLAR_SYSTEM_COST_PER_KW, BATTERY_UNIT_KWH, BATTERY_UNIT_COST,
-    BASE_ITC_RATE, CALCULATOR_SIMPLIFIED_MACRS_RATE, LOAN_RATE
+    SOLAR_SYSTEM_COST_PER_KW, DEFAULT_DC_AC_RATIO,
+    BASE_ITC_RATE, INVERTER_EFF, LOAN_RATE,
+    NET_METER_CREDIT_FACTOR, MACRS_TAX_RATE,
+    generate_hourly_rate_schedule
 )
 
 PVWATTS_API_ENDPOINT_V8 = "https://developer.nrel.gov/api/pvwatts/v8.json"
@@ -14,11 +15,13 @@ NREL_API_KEY_HOLDER = {"key": None}
 
 @st.cache_data(ttl=3600)
 def geocode_address_nominatim(address):
+    """Returns (lat, lon, error_message_or_none)."""
+
     if not address:
         return "Address not provided."
     try:
         geo_url = f"https://nominatim.openstreetmap.org/search?format=json&q={address}"
-        headers = {'User-Agent': 'SharkbiteStreamlitApp/1.1'}
+        headers = {'User-Agent': 'SharkbiteStreamlitApp/2.2'}
         response = requests.get(geo_url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -32,7 +35,7 @@ def geocode_address_nominatim(address):
 
 
 @st.cache_data
-def fetch_pvwatts_production_v8(lat, lon, system_capacity_kw,
+def fetch_pvwatts_hourly_production(lat, lon, system_capacity_kw,
                                 azimuth=180, tilt=20, array_type=1, module_type=0, losses=14):
 
     api_key = NREL_API_KEY_HOLDER["key"]
@@ -41,14 +44,18 @@ def fetch_pvwatts_production_v8(lat, lon, system_capacity_kw,
         return "NREL API Key is missing."
     if not all([lat is not None, lon is not None, system_capacity_kw is not None]):
         return "Latitude, longitude, or system capacity missing for PVWatts."
-    if system_capacity_float <= 0 or system_capacity_float > 500000: # PVWatts limit
+    if system_capacity_float <= 0:
+        # Gracefully handle 0 kW system size without an API call
+        return [0.0] * 8760, None
+    
+    if system_capacity_float > 500000: # PVWatts limit
         return f"Invalid system capacity: {system_capacity_kw} kW. Must be > 0 and <= 500,000 kW."
 
     params = {
         "api_key": api_key,
         "lat": lat,
         "lon": lon,
-        "system_capacity": system_capacity_kw,
+        "system_capacity": system_capacity_float,
         "azimuth": azimuth,
         "tilt": tilt,
         "array_type": array_type,
@@ -60,162 +67,263 @@ def fetch_pvwatts_production_v8(lat, lon, system_capacity_kw,
         response = requests.get(PVWATTS_API_ENDPOINT_V8, params=params, timeout=15)
         response.raise_for_status()
         data = response.json()
-        if "outputs" in data and "ac_annual" in data["outputs"] and "ac_monthly" in data["outputs"]:
-            return data["outputs"]["ac_annual"], data["outputs"]["ac_monthly"]
+        if "outputs" in data and "ac" in data["outputs"]:
+            return data["outputs"]["ac"]  # <--- hourly AC system production
         else: # Handle API specific errors if any
             errors = data.get('errors', ['Unknown PVWatts API response error (v8).'])
-            error_str = str(errors[0]) if isinstance(errors, list) and errors else str(errors)
-            return f"PVWatts API response error: {error_str}"
+            error_msg = str(errors[0]) if isinstance(errors, list) and errors else str(errors)
+            return f"PVWatts API response error: {error_msg}" 
+        
     except requests.exceptions.RequestException as e:
         return f"PVWatts API call error: {e}"
     except Exception as e:
         return f"Unexpected error processing PVWatts (v8) data: {e}"
-
-
-def calculate_solar_system_size_from_usage(monthly_usage_kwh, avg_sun_hours=AVG_SUN_HOURS_FOR_AUTOSIZE, derate_factor=DERATE_FACTOR_FOR_AUTOSIZE):
-    if monthly_usage_kwh <= 0 or avg_sun_hours <=0 or derate_factor <=0:
-        return 0
-    return round(monthly_usage_kwh / (avg_sun_hours * 30 * derate_factor), 1)
-
-
-def calculate_battery_storage(backup_pref, monthly_usage_kwh):
-    battery_kwh = 0
-    battery_units = 0
-    if backup_pref == "Essentials Only":
-        battery_kwh = BATTERY_UNIT_KWH
-    elif backup_pref == "Whole House Backup":
-        avg_daily_usage = monthly_usage_kwh / 30
-        battery_kwh = avg_daily_usage * 1.5
-
-    if battery_kwh > 0:
-        battery_units = int((battery_kwh + BATTERY_UNIT_KWH - 1) // BATTERY_UNIT_KWH)
     
-    battery_cost = battery_units * BATTERY_UNIT_COST
-    avg_daily_load = monthly_usage_kwh / 30
-    backup_duration_days = battery_kwh / avg_daily_load if avg_daily_load > 0 and battery_kwh > 0 else 0
-    
-    return battery_kwh, battery_units, battery_cost, backup_duration_days
+
+# --- Battery Sizing Logic ---
+def get_battery_specs(backup_pref: str):
+    """Returns battery kWh and cost based on user preference."""
+    # This logic is simpler and more aligned now
+    if backup_pref == "Essentials Only (10 kWh)":
+        return 10.0 # 10 kWh, $12k
+    elif backup_pref == "Whole House Backup (25 kWh)":
+        return 25.0 # 25 kWh, $25k
+    else: # No Backup
+        return 0.0
 
 
-# -------- Cash Flow --------
-def calculate_financials(
-    system_size_kw,
-    battery_cost,
-    ac_annual_kwh,
-    user_business_type_val,
-    monthly_usage_kwh,
-    electricity_per_kwh_rate
+# --- This generates a flat load profile for now ---
+def synthesize_hourly_load_profile(annual_kwh, user_type):
+    if annual_kwh <= 0 and user_type == "Homeowner":
+        return [0.0] * 8760
+    return [annual_kwh / 8760.0] * 8760
+
+
+# --- BATTERY DISPATCH ALGORITHM ---
+def run_hourly_dispatch_simulation(
+    hourly_load,
+    hourly_solar,
+    battery_kwh,
+    inverter_size_kw,
+    min_battery_reserve_pct,
+    self_consumption_priority,
+    tou_enabled,
+    peak_hours, # Default PG&E-like peak rates: 4 PM to 9 PM == range(16, 21)
+    battery_eff=0.90
 ):
-    results = {
-        "solar_system_cost": 0.0,
-        "total_cost_with_battery": 0.0,
-        "itc_amount_calculator": 0.0,
-        "macrs_simplified_calculator": 0.0,
-        "annual_savings_calculator": 0.0,
-        "net_cost_calculator": 0.0,
-        "roi_calculator_percent": 0.0,
-        "payback_calculator_years": float('inf'), # Default to inf if no savings or positive cost
-        "annual_solar_production_kwh": 0.0,
-        "net_metering_credit_calculator": 0.0,
-        "monthly_cashflow": 0.0
+    """
+    Simulates hourly energy flow with a TOU-aware, self-consumption priority.
+    This logic is adapted directly from `dispatch` function.
+    """
+    soc = 0.0 # State of Charge in kWh
+    import_kwh = np.zeros(8760)
+    export_kwh = np.zeros(8760)
+    solar_to_load = np.zeros(8760)
+    solar_to_battery = np.zeros(8760)
+    battery_to_load = np.zeros(8760)
+    
+    min_soc_kwh = battery_kwh * (min_battery_reserve_pct / 100.0)
+    
+    # Calculates what the inverter can actually output to AC (clipping)
+    inverter_output_ac = np.minimum(hourly_solar, inverter_size_kw)
+    # Clipped DC power is "free" energy available to a DC-coupled battery
+    clipped_dc_power = np.maximum(0, hourly_solar - inverter_size_kw)
+
+    for hour in range(8760):
+        L = hourly_load[hour]
+        S_ac = inverter_output_ac[hour]
+        S_clipped = clipped_dc_power[hour]
+        is_peak_hour = hour % 24 in peak_hours
+        
+        # 1. Charge from "free" clipped DC power first
+        available_solar_for_charge = S_clipped + (S_ac * INVERTER_EFF)
+        if available_solar_for_charge > 0 and soc < battery_kwh:
+            charge = min(available_solar_for_charge, battery_kwh - soc)
+            soc += charge * battery_eff
+            solar_to_battery[hour] = charge / INVERTER_EFF # Record power drawn from solar
+            S_ac -= charge / INVERTER_EFF
+        
+        # 2. Solar AC directly serves on-site load
+        to_load = min(L, S_ac)
+        solar_to_load[hour] = to_load
+        L -= to_load
+        S_ac -= to_load
+
+        # 3. Handle remaining AC solar: Charge battery earlier and then (compare with remaining battery power) to export
+        if S_ac > 0:
+            # --- SELF-CONSUMPTION LOGIC ---
+            # If any solar is still left after charging and battery is full, decide whether to export
+            if soc >= battery_kwh and self_consumption_priority:
+                export_kwh[hour] = S_ac
+                # If self_consumption_priority is True, remaining S_ac is NOT curtailed (discarded)
+                
+            if not self_consumption_priority:
+                export_kwh[hour] = S_ac
+                # If NOT prioritizing self-consumption, export any remaining solar.
+
+                
+        # 4. Battery Discharging to meet remaining load
+        if L > 0 and soc > min_soc_kwh:
+            discharge_decision = False # Should we discharge in this hour?
+
+            if tou_enabled and is_peak_hour:
+                # Always discharge during peak hours if there's a load
+                discharge_decision = True
+
+            # Off-peak: Only discharge if the user's goal is self-consumption
+            if tou_enabled and self_consumption_priority and not is_peak_hour:
+                discharge_decision = True
+                # If self_consumption_priority is False, we do nothing (pass)
+                # and save the battery for the peak!
+
+            if not tou_enabled and self_consumption_priority:
+                # If there's no TOU, the only goal is self-consumption. Always discharge to meet load.
+                discharge_decision = True
+
+            if discharge_decision:
+                discharge_available = soc - min_soc_kwh
+                discharge_amount = min(discharge_available, L / INVERTER_EFF)
+                soc -= discharge_amount
+                battery_to_load[hour] = discharge_amount * INVERTER_EFF
+                L -= discharge_amount * INVERTER_EFF
+    
+        # 5. Grid Import (Last Resort)
+        if L > 0:
+            import_kwh[hour] = L
+
+    # --- FINAL KPI CALCULATIONS ---
+    total_solar_production = np.sum(hourly_solar)
+    total_load = np.sum(hourly_load)
+    
+    # Total self-consumption is the sum of solar that went to load and solar that went to battery
+    total_self_consumed_solar = np.sum(solar_to_load) + np.sum(solar_to_battery)
+    
+    # Total energy provided by the on-site system is self-consumed solar + what the battery discharged
+    total_onsite_supply = np.sum(solar_to_load) + np.sum(battery_to_load)
+    
+    self_consumption_rate = (total_self_consumed_solar / total_solar_production) * 100 if total_solar_production > 0 else 0
+    grid_independence_rate = (total_onsite_supply / total_load) * 100 if total_load > 0 else 0
+    
+    annual_import = np.sum(import_kwh)
+    annual_export = np.sum(export_kwh)
+        
+    return {
+        "annual_import_kwh": annual_import,
+        "annual_export_kwh": annual_export,
+        "hourly_import": import_kwh,
+        "hourly_export": export_kwh,
+        # Pass hourly series for detailed financial calculation
+        "hourly_solar": hourly_solar,
+        "hourly_load": hourly_load,
+        "hourly_solar_to_load": solar_to_load,
+        "hourly_battery_to_load": battery_to_load,
+        "self_consumption_rate_percent": self_consumption_rate * 100,
+        "grid_independence_rate_percent": min(grid_independence_rate, 100.0),
+        "net_grid_interaction_kwh": annual_import - annual_export
     }
 
-    # --- Defensive Type Coercion and Validation for Inputs ---
+
+def calculate_future_electrification_load(ev_miles=0, ev_efficiency=4.0, heat_pump_btu=0, heat_pump_cop=3.0):
+    """Calculates the additional annual kWh load from future electrification."""
+    additional_kwh = 0.0
     try:
-        # Ensure all inputs that are part of calculations are floats or ints
-        # System Size
-        sys_size_kw = float(system_size_kw) if system_size_kw is not None else 0.0
-        if sys_size_kw < 0: sys_size_kw = 0.0 # Cannot be negative
-
-        # Battery Cost
-        batt_cost = float(battery_cost) if battery_cost is not None else 0.0
-        if batt_cost < 0: batt_cost = 0.0
-
-        # Annual Solar Production
-        ac_annual_kwh = float(ac_annual_kwh) if ac_annual_kwh is not None else 0.0
-        if ac_annual_kwh < 0: ac_annual_kwh = 0.0
-        results["annual_solar_production_kwh"] = ac_annual_kwh
+        if ev_miles > 0 and ev_efficiency > 0:
+            additional_kwh += float(ev_miles) / float(ev_efficiency)
+        if heat_pump_btu > 0 and heat_pump_cop > 0:
+            # Conversion: 1 kWh = 3412 BTU
+            kwh_for_heat_pump = (float(heat_pump_btu) / 3412.0) / float(heat_pump_cop)
+            additional_kwh += kwh_for_heat_pump
+    except (ValueError, TypeError):
+        return 0.0 # Return 0 if inputs are invalid
+    return additional_kwh
 
 
-        # Monthly Usage
-        monthly_usage = float(monthly_usage_kwh) if monthly_usage_kwh is not None else 0.0
-        if monthly_usage < 0: monthly_usage = 0.0
-        total_annual_usage_kwh = monthly_usage * 12
+def calculate_final_financials(
+    capex, dispatch_results, hourly_rates, hourly_load, user_type
+):
+    """
+    Calculates final financials based on hourly dispatch results and TOU rates.
+    This logic is adapted from the `financials` and `monthly_cashflow` functions.
+    """
 
-        # Electricity Rate
-        elec_rate = float(electricity_per_kwh_rate) if electricity_per_kwh_rate is not None else 0.0
-        if elec_rate < 0: elec_rate = 0.0
+    # Define hourly rates based on TOU settings
+    # Create an index for the full year to map hours
+    hourly_index = pd.to_datetime(np.arange(8760), unit='h', origin=pd.Timestamp('2025-01-01'))
 
-    except (ValueError, TypeError) as e:
-        # This error should ideally be caught before calling this function,
-        # but as a safeguard:
-        st.error(f"Input data error for financial calculation: {e}. Please check inputs.")
-        return results
+    # Unpack hourly arrays from dispatch results
+    hourly_solar_to_load = dispatch_results['hourly_solar_to_load']
+    hourly_battery_to_load = dispatch_results['hourly_battery_to_load']
+    hourly_import = dispatch_results['hourly_import']
+    hourly_export = dispatch_results['hourly_export']
 
-    # --- Calculations (as per the script/formulas, ensuring numeric operations) ---
+    # --- Revenue Shift: Calculate savings based on avoided costs and export revenue ---
+    # 1. Cost Avoided by Solar (Direct Self-Consumption)
+    cost_avoided_by_solar = np.sum(hourly_solar_to_load * hourly_rates)
+
+    # 2. Cost Avoided by Battery (TOU/Self-Consumption)
+    cost_avoided_by_battery = np.sum(hourly_battery_to_load * hourly_rates)
+
+    annual_export_revenue = np.sum(hourly_export * hourly_rates * NET_METER_CREDIT_FACTOR)
+
+    # Total Annual Savings is the sum of these three value streams
+    total_annual_savings = cost_avoided_by_solar + cost_avoided_by_battery + annual_export_revenue
     
-    # Solar System Cost
-    solar_system_cost = sys_size_kw * SOLAR_SYSTEM_COST_PER_KW
-    results["solar_system_cost"] = solar_system_cost
+    # Incentives
+    itc_val = capex * BASE_ITC_RATE
+    macrs_val = 0
+    if user_type == "Commercial / Business":
+        macrs_basis = capex - 0.5 * itc_val
+        macrs_val = macrs_basis * 0.85 * MACRS_TAX_RATE
 
-    # Total Cost (Solar + Battery)
-    total_cost_with_battery = solar_system_cost + batt_cost
-    results["total_cost_with_battery"] = total_cost_with_battery
-
-    # ITC Amount (on total cost with battery)
-    itc_amount_val = total_cost_with_battery * BASE_ITC_RATE
-    results["itc_amount_calculator"] = itc_amount_val
-
-    # Simplified MACRS Benefit (for commercial)
-    macrs_simplified_benefit = 0.0
-    if user_business_type_val == "Commercial / Business": # Ensure this string matches exactly
-        macrs_simplified_benefit = total_cost_with_battery * CALCULATOR_SIMPLIFIED_MACRS_RATE
-    results["macrs_simplified_calculator"] = macrs_simplified_benefit
-
-    # Net Metering Credit (Excess production * (rate * 0.75))
-    excess_kwh_annual = ac_annual_kwh - total_annual_usage_kwh
-    # Only apply credit if there's actual excess and rate is positive
-    net_metering_credit = 0.0
-    if excess_kwh_annual > 0 and elec_rate > 0:
-        net_metering_credit = excess_kwh_annual * (elec_rate * DERATE_FACTOR_FOR_AUTOSIZE)
-    results["net_metering_credit_calculator"] = net_metering_credit
-
-    # Annual Savings from Solar
-    # Value of solar produced that offsets usage, PLUS net metering credits
-    kwh_offsetting_usage = min(ac_annual_kwh, total_annual_usage_kwh)
-    savings_from_offset_usage = kwh_offsetting_usage * elec_rate
-    total_annual_savings_value = savings_from_offset_usage + net_metering_credit
-    results["annual_savings_calculator"] = total_annual_savings_value
-
-    # Net Cost after these initial incentives
-    net_cost_calculator = total_cost_with_battery - itc_amount_val
-    if user_business_type_val == "Commercial / Business":
-        net_cost_calculator -= macrs_simplified_benefit
-    results["net_cost_calculator"] = net_cost_calculator
+    net_cost = capex - itc_val - macrs_val
+    payback = net_cost / total_annual_savings if total_annual_savings > 0 else float('inf')
     
-    # ROI and Payback
-    if net_cost_calculator > 0 and total_annual_savings_value > 0:
-        results["roi_calculator_percent"] = (total_annual_savings_value / net_cost_calculator) * 100.0
-        results["payback_calculator_years"] = net_cost_calculator / total_annual_savings_value
-    elif total_annual_savings_value > 0: # Net cost is zero or negative, instant payback/high ROI
-        results["roi_calculator_percent"] = float('inf') # Or a very large number / "Immediate"
-        results["payback_calculator_years"] = 0.0
-    else: # No savings, so infinite payback and zero (or negative if cost > 0) ROI
-        results["roi_calculator_percent"] = 0.0 if net_cost_calculator >= 0 else float('-inf')
-        results["payback_calculator_years"] = float('inf')
+    # Using the 25-year ROI formula
+    roi_25_yr = ((total_annual_savings * 25 - net_cost) / net_cost) * 100 if net_cost > 0 else float('inf')
 
+    # --- Builds Monthly Cash Flow DataFrame ---
+    # Convert numpy arrays to pandas Series with a DatetimeIndex for easy resampling
+    import_series = pd.Series(hourly_import, index=hourly_index)
+    export_series = pd.Series(hourly_export, index=hourly_index)
+    rates_series = pd.Series(hourly_rates, index=hourly_index)
     
-    # Simplified interest-only payment for mock-up purposes
-    monthly_payment = (net_cost_calculator * LOAN_RATE) / 12
-    monthly_savings = total_annual_savings_value / 12
-    monthly_cashflow = monthly_savings - monthly_payment
-    results["monthly_cashflow"] = monthly_cashflow
+    monthly_df = pd.DataFrame({
+        "Import_kWh": import_series.resample("ME").sum(),
+        "Export_kWh": export_series.resample("ME").sum(),
+        "Remaining Grid Import Cost ($)": (import_series * rates_series).resample("ME").sum(),
+        "Net Export Revenue ($)": (export_series * rates_series * NET_METER_CREDIT_FACTOR).resample("ME").sum()
+    })
 
-    return results
+    monthly_df["Original Bill Cost ($)"] = pd.Series(hourly_load * hourly_rates, index=hourly_index).resample("ME").sum()
+    monthly_df["Cost Avoided by Solar ($)"] = pd.Series(hourly_solar_to_load * hourly_rates, index=hourly_index).resample("ME").sum()
+    monthly_df["Cost Avoided by Battery ($)"] = pd.Series(hourly_battery_to_load * hourly_rates, index=hourly_index).resample("ME").sum()
+    monthly_df["New Bill ($)"] = monthly_df["Remaining Grid Import Cost ($)"] - monthly_df["Net Export Revenue ($)"]
+    monthly_df["Monthly Savings ($)"] = monthly_df["Original Bill Cost ($)"] - monthly_df["New Bill ($)"]
+    
+    # Monthly Cashflow
+    # Simplified loan payment for cash flow chart
+    monthly_payment = (net_cost * LOAN_RATE) / 12 if net_cost > 0 else 0
+    monthly_df["Loan_Payment_$"] = -monthly_payment   # Negative cash flow
+    monthly_df["Net_Cash_Flow_$"] = monthly_df["Monthly Savings ($)"] - monthly_payment
+    monthly_df.index = monthly_df.index.strftime('%b')   # Format index to 'Jan', 'Feb', etc.
+
+    return {
+        "total_annual_savings": total_annual_savings,
+        "savings_from_battery_tou_shifting": cost_avoided_by_battery,
+        "total_capex": capex,
+        "itc_amount": itc_val,
+        "macrs_benefit": macrs_val,
+        "net_cost": net_cost,
+        "payback_years": payback,
+        "roi_percent_25_yr": roi_25_yr,
+        "monthly_cash_flow_df": monthly_df
+    }
 
 
 def perform_solar_battery_calculations(inputs):
     """
+    Main orchestrator for the calculator screen.
+    Incorporates Future Load and Self-Consumption logic.
     Takes a dictionary of inputs from the calculator screen and returns all calculated metrics.
     Inputs: address, monthly_kwh_usage, cost_per_kwh, system_size_kw, backup_pref, user_type
     """
@@ -223,107 +331,94 @@ def perform_solar_battery_calculations(inputs):
         "lat": None, "lon": None, "geo_error": None,
         "ac_annual": None, "ac_monthly": None, "pv_error": None,
         "battery_kwh": 0, "battery_units": 0, "battery_cost": 0, "backup_duration_days": 0,
-        "financials": {} # To store results from calculate_initial_financials_for_calculator
+        "future_load_kwh": 0.0,
+        "financials": {}, # To store results from calculate_initial_financials_for_calculator
+        "dispatch_results": {}
     }
 
     # 1. Geocode
-    # results["geo_error"]
     results["lat"], results["lon"] = geocode_address_nominatim(inputs.get("address"))
-
     if results["geo_error"]:
         return results # Stop if geocoding fails
+    
+    # 2. Battery Sizing (Get specs first)
+    battery_kwh = get_battery_specs(inputs.get("backup_pref"))
+    results.update({"battery_kwh": battery_kwh})
 
-    # 2. PVWatts
-    # results["pv_error"]
-    results["ac_annual"], results["ac_monthly"] = fetch_pvwatts_production_v8(
-        results["lat"], results["lon"], inputs.get("system_size_kw", 0)
-    )
+    # 3. Hourly PVWatts
+    # Utilizes user input to calculate inverter size from generated solar power
+    inverter_size_kw_ac = inputs.get("inverter_size_kw", 0)
 
+    hourly_solar = fetch_pvwatts_hourly_production(results["lat"], results["lon"], inputs.get("system_size_kw",0))
     if results["pv_error"]:
-        return results # Stop if PVWatts fails
+        return results  # Stop if PVWatts fails
+    
+    # Calculate annual and monthly summaries from the hourly data
+    ac_annual_kwh = sum(hourly_solar) if hourly_solar else 0
 
-    # 3. Battery Sizing
-    results["battery_kwh"], results["battery_units"], results["battery_cost"], results["backup_duration_days"] = \
-        calculate_battery_storage(
-            inputs.get("backup_pref"), inputs.get("monthly_kwh_usage", 0)
-        )
+    # The annual production is the SUM of the hourly production list
+    results["ac_annual"] = ac_annual_kwh
+    results["ac_monthly"] = None # We can reconstruct monthly from hourly if needed, but annual is key
+    # Create monthly summary (this is a simplified way, more accurate would be to use calendar days)
+    # monthly_solar_production = [sum(hourly_solar[i:i + 730]) for i in range(0, len(hourly_solar), 730)]
+    # results["ac_monthly"] = monthly_solar_production[:12] # Ensure it's 12 months
 
-    # 4. Initial Financials (with simplified MACRS)
-    results["financials"] = calculate_financials(
-        inputs.get("system_size_kw", 0),
-        results["battery_cost"],
-        results["ac_annual"] if results["ac_annual"] is not None else 0,
-        inputs.get("user_type"), # Pass user_type ("Homeowner" or "Commercial / Business")
-        inputs.get("monthly_kwh_usage", 0),
-        inputs.get("cost_per_kwh", 0),
+    hourly_solar_dc = np.array(hourly_solar) * DEFAULT_DC_AC_RATIO  # Estimate DC production
+    st.session_state.hourly_solar_production_for_dispatch = hourly_solar
+
+    # 4.1 Future Load and Total Projected Usage
+    future_load_kwh = calculate_future_electrification_load(
+        inputs.get("ev_annual_miles"), inputs.get("ev_efficiency_mi_kwh"),
+        inputs.get("heat_pump_btu_yr"), inputs.get("heat_pump_cop")
     )
+    results["future_load_kwh"] = future_load_kwh
+
+    # Use the annual usage calculated in the UI for the load profile
+    annual_kwh_est = inputs.get('annual_kwh_est', 0)
+    total_projected_annual_kwh = annual_kwh_est + future_load_kwh
+    st.session_state.form_data['total_projected_annual_kwh'] = total_projected_annual_kwh
+
+    # 4.2 Synthesize HOURLY load profile
+    hourly_load = synthesize_hourly_load_profile(total_projected_annual_kwh, inputs.get("user_type"))
+    st.session_state.hourly_load_for_dispatch = hourly_load
+
+    # 5. Generate Accurate Hourly Rate Schedule (`rate_plan` is now a key user input)
+    selected_rate_plan = inputs.get("rate_plan", "Residential E-TOU-C")
+    hourly_rates = generate_hourly_rate_schedule(selected_rate_plan)
+
+    # 6. Run Self-Consumption Dispatch Algorithm
+    tou_enabled_input = inputs.get("tou_enabled") # Pass TOU checkbox
+    dispatch_results = run_hourly_dispatch_simulation(
+        hourly_load=hourly_load,
+        hourly_solar=hourly_solar_dc,
+        inverter_size_kw=inverter_size_kw_ac,
+        battery_kwh=battery_kwh,
+        min_battery_reserve_pct=inputs.get("min_battery_reserve_pct", 0), # <-- New user input
+        self_consumption_priority=inputs.get("self_consumption_priority"), # <-- New user input
+        tou_enabled=tou_enabled_input,
+        peak_hours=hourly_rates
+    )
+    results.update(dispatch_results)
+
+    # 7. Calculate financials using the new dispatch results
+    solar_system_cost = inputs.get("system_size_kw", 0) * SOLAR_SYSTEM_COST_PER_KW
+    battery_cost = battery_kwh * inputs.get("calc_battery_cost", 0)
+    results.update({
+        "pv_system_cost": solar_system_cost,
+        "battery_cost": battery_cost
+    })
+    total_capex = solar_system_cost + battery_cost
+
+    results["financials"] = calculate_final_financials(
+        capex=total_capex,
+        dispatch_results=dispatch_results,
+        hourly_load=hourly_load,
+        hourly_rates=hourly_rates, # <-- PASSING THE DYNAMIC TOU RATE SCHEDULE
+        user_type=inputs.get("user_type")
+    )
+
+    # Add backup duration for display
+    avg_daily_load = total_projected_annual_kwh / 365
+    results["backup_duration_days"] = battery_kwh / avg_daily_load if avg_daily_load > 0 else 0
+
     return results
-
-# def calculate_financials(system_size_kw, ac_annual_kwh, monthly_usage_kwh, cost_per_kwh_rate,
-#                          battery_cost_val, user_business_type_val, include_macrs=True):
-    
-#     try:
-#         system_size_kw = float(system_size_kw if system_size_kw is not None else 0.0)
-#         battery_cost = float(battery_cost_val if battery_cost_val is not None else 0.0)
-#         ac_annual_solar_kwh = float(ac_annual_kwh if ac_annual_kwh is not None else 0.0)
-#         monthly_kwh_usage = float(monthly_usage_kwh if monthly_usage_kwh is not None else 0.0)
-#         cost_per_kwh_rate = float(cost_per_kwh_rate if cost_per_kwh_rate is not None else 0.0)
-#     except (ValueError, TypeError):
-#         st.error('Could not convert values!')
-#         # battery_cost = 0.0
-#         # ac_annual_solar_kwh = 0.0
-#         # monthly_kwh_usage = 0.0
-#         # electricity_rate = 0.0
-
-
-#     total_solar_system_cost = system_size_kw * SOLAR_SYSTEM_COST_PER_KW
-#     total_system_and_battery_cost = total_solar_system_cost + battery_cost
-    
-#     federal_itc_amount = total_system_and_battery_cost * BASE_ITC_RATE
-    
-#     macrs_benefit = 0.0
-#     if user_business_type_val == "Commercial / Business" and include_macrs:
-#         # "MACRS Depreciation Benefit: 26% x (System Cost + Battery Cost)"
-#         macrs_benefit = total_system_and_battery_cost * CALCULATOR_SIMPLIFIED_MACRS_RATE
-
-
-#     # Net Metering Credit from formulas
-#     total_annual_usage_kwh = monthly_kwh_usage * 12
-#     excess_kwh_annual = ac_annual_solar_kwh - total_annual_usage_kwh
-#     net_metering_credit_annual = max(0.0, excess_kwh_annual * (cost_per_kwh_rate * DERATE_FACTOR_FOR_AUTOSIZE))
-    
-#     annual_savings_from_solar = net_metering_credit_annual + (ac_annual_solar_kwh * cost_per_kwh_rate)
-    
-#     # Corrected Annual Savings: Value of solar produced that offsets usage, plus net metering credits
-#     # kwh_offsetting_usage = min(ac_annual_kwh, total_annual_usage_kwh)
-#     # savings_from_offset_usage = kwh_offsetting_usage * cost_per_kwh_rate
-#     # total_annual_savings_value = savings_from_offset_usage + net_metering_credit_annual
-
-#     net_cost_after_incentives = total_system_and_battery_cost - federal_itc_amount - macrs_benefit
-
-#     # Let's use Annual Savings / Net Cost for a simple ROI
-#     roi_percent = (annual_savings_from_solar / net_cost_after_incentives) * 100.0 if net_cost_after_incentives > 0 else float('inf') if annual_savings_from_solar > 0 else 0
-    
-#     # Payback Period (Years) = Net Cost After Incentives / Annual Savings
-#     payback_years = net_cost_after_incentives / annual_savings_from_solar if annual_savings_from_solar > 0 else float('inf')
-
-
-#     # Loan payment calculation is simplified in the script. A real one needs PITI.
-#     # loan_rate = 0.06 # Example, should be input or config
-#     # loan_term_years = 15
-#     # monthly_payment_mock = (net_cost_after_incentives * loan_rate) / 12 # Highly simplified
-#     # monthly_cash_flow = (annual_savings_from_solar / 12) - monthly_payment_mock
-    
-#     # For Week 1, let's just return the components
-#     return {
-#         "total_solar_system_cost": total_solar_system_cost,
-#         "total_system_and_battery_cost": total_system_and_battery_cost,
-#         "federal_itc_amount": federal_itc_amount,
-#         "macrs_benefit": macrs_benefit,
-#         "net_metering_credit_annual": net_metering_credit_annual,
-#         "total_annual_savings_value": annual_savings_from_solar,
-#         "net_cost_after_incentives": net_cost_after_incentives,
-#         "roi_percent": roi_percent,
-#         "payback_years": payback_years
-#         # "monthly_cash_flow": monthly_cash_flow # Defer this for more robust loan modeling
-#     }

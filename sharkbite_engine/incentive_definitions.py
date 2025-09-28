@@ -220,5 +220,62 @@ INCENTIVE_PROGRAMS = [
             {"id": "cbbg_submitted_budget", "label": "Submitted Budget for Grant ($)", "type": "number_input"}
         ],
         "calculation_logic": lambda cbbg_submitted_budget: cbbg_submitted_budget # Grant = Submitted Budget
+    },
+
+    # ================================================================================================
+    # 4. California CORE (Clean Off-Road Equipment Voucher) Incentive Program For Off-Road Vehicles
+    # Agency -- California Air Resources Board (CARB) & CALSTART
+    # ================================================================================================
+    {
+        "id": "ca_core",
+        "name": "California CORE Voucher Program",
+        "level": "State", "state": "CA", "type": "Point-of-Sale Voucher",
+        "eligibility_rules": [
+            # Applicant Type: Small business or public agency (FY 2024-25 eligibility)
+            {"field": "unified_business_type", "condition": "is_one_of", "value": ["Commercial / Business", "Small Business", "Nonprofit"]}, # Assuming these map to SB/public agency
+            # Project Location: Must be in California
+            {"field": "location_state_mock", "condition": "is_equal_to", "value": "CA"}
+        ],
+        "calculation_inputs": [
+            # Input for Equipment Type to determine Base Voucher
+            {
+                "id": "core_equipment_type", "label": "CORE-Eligible Equipment Type", "type": "selectbox",
+                "options": [
+                    "Truck and Trailer-mounted TRUs",
+                    "Airport Cargo Loaders",
+                    "Wide-body Aircraft Tugs",
+                    "Mobile Power Units / Ground Power Units",
+                    "Construction & Agricultural Equipment",
+                    "Large Forklifts / Freight / Harbor Craft"
+                ],
+                "data_type": "string"  # Specify the expected data type
+            },
+            # Inputs for Enhancements
+            {
+                "id": "core_is_disadvantaged_community", "label": "Is equipment deployed in a disadvantaged/low-income community?",
+                "type": "toggle", "value": False,
+                "data_type": "boolean"
+            },
+            {
+                "id": "core_is_small_business", "label": "Is your organization a certified small business?",
+                "type": "toggle", "value": True, # Default to true since it's a primary user type
+                "data_type": "boolean" 
+            }
+        ],
+        "calculation_logic": lambda core_equipment_type, core_is_disadvantaged_community, core_is_small_business: \
+            (
+                {
+                    "Truck and Trailer-mounted TRUs": 65000,
+                    "Airport Cargo Loaders": 100000,
+                    "Wide-body Aircraft Tugs": 200000,
+                    "Mobile Power Units / Ground Power Units": 300000,
+                    "Construction & Agricultural Equipment": 500000,
+                    "Large Forklifts / Freight / Harbor Craft": 1000000
+                }.get(core_equipment_type, 0)
+            ) * (
+                1 +
+                (0.10 if core_is_disadvantaged_community else 0) +
+                (0.15 if core_is_small_business else 0)
+            )
     }
 ]

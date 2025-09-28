@@ -39,14 +39,19 @@ The necessary Python packages are listed in the `requirements.txt` file. Install
 pip install -r requirements.txt
 ```
 
-### 4. Configure NREL PVWatts API Key
+### 4. Configure API Keys and Secrets
 <!--This application uses the NREL PVWatts API to estimate solar energy production which requires an API key from NREL.-->
-Add your NREL PVWatts API key to this `secrets.toml` file as follows:
+> 📌 Replace the placeholder key values with your actual credentials within the `secrets.toml` file below as follows:
 ```toml
   # .streamlit/secrets.toml
   NREL_API_KEY = "YOUR_API_KEY_HERE"
+
+  # AWS Credentials for accessing Amazon Bedrock model are required to power the AI features.
+  AWS_ACCESS_KEY_ID = "YOUR_AWS_ACCESS_KEY_ID_HERE"
+  AWS_SECRET_ACCESS_KEY = "YOUR_AWS_SECRET_ACCESS_KEY_HERE"
+  AWS_REGION = "us-west-2"  # e.g., Use the region where you have LLM model access -- us-east-1, us-west-1
 ```
-> 📌 Replace `"YOUR_API_KEY_HERE"` with the API key provided to you. **Do not commit this file with your actual key to a public repository.**
+**Do not commit this file with your actual key to a public repository.**
 
 ### 5. Run the Streamlit App
 Once the environment is set up and the API key is configured, run the following command in your terminal:
@@ -69,13 +74,15 @@ Sharkbite/
 ├── static/
 │   └── BebasNeue-Regular.ttf        # Custom font family for headers in the app
 ├── sharkbite_engine/                # Core logic and utilities
-│   ├── solar_calculator_logic.py    # Calculation functions, API calls
-│   └── incentive_definitions.py     # Structured definitions for the full suite of financial grants
+│   ├── solar_calculator_logic.py    # Calculation functions for sizing, dispatch, and simplified financials
+│   └── incentive_definitions.py     # Structured definitions for all grant and incentive programs
+│   └── claude_service.py            # Manages all interactions with the Claude LLM Model on AWS Bedrock
 │   └── ui_login_screen.py           # Streamlit main login screen function
 │   └── ui_unified_intake_screen.py  # Streamlit screen 1 rendering functions
 │   └── ui_calculator_screen.py      # Streamlit screen 2 rendering functions
+│   └── ui_ppa_analyzer_screen.py    # Renders the optional PPA vs. Ownership analysis screen for homeowners
 │   └── ui_reap_flow_screens.py      # Streamlit screens 3-7 rendering functions
-│   └── utils.py                     # Constants & other functions
+│   └── utils.py                     # Contains shared constants, helper functions, and the final calculator
 ├── sharkbite_mvp v1.0/              # Older App Version
 ├── sharkbite_app.py                 # Streamlit App
 ├── requirements.txt                 # Project dependencies

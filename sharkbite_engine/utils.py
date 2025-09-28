@@ -1,18 +1,73 @@
 from sharkbite_engine.incentive_definitions import INCENTIVE_PROGRAMS
-import inspect
+from datetime import date
+import numpy as np
+import pandas as pd
+import inspect  # To inspect function arguments
 import streamlit as st
 
 # --- Important Constants ---
-AVG_SUN_HOURS_FOR_AUTOSIZE = 5
-DERATE_FACTOR_FOR_AUTOSIZE = 0.75
-SOLAR_SYSTEM_COST_PER_KW = 2500
-BATTERY_UNIT_KWH = 13.5
-BATTERY_UNIT_COST = 12000
+# Specific yield: kWh produced annually per kW of system size which varies by location (for auto-sizing from bill)
+SPECIFIC_YIELD_RULE_OF_THUMB = 1300 # a reasonable US average for a simple rule-of-thumb.
+INVERTER_EFF = 0.96
+
+PV_COST_PER_WATT = 3.50  # $/W installed, for CapEx calculation
+SOLAR_SYSTEM_COST_PER_KW = PV_COST_PER_WATT * 1000 # For consistency with our kW-based logic
+BATTERY_COST_PER_KWH = 700  # $/kWh turn-key (adjust as needed)
+DEFAULT_DC_AC_RATIO = 1.25
+
 BASE_ITC_RATE = 0.30 # For calculator step
 LOAN_RATE = 0.06
 
-# MACRS for Calculator (Screen 2 of new flow)
-CALCULATOR_SIMPLIFIED_MACRS_RATE = 0.26 # Flat 26% of (System + Battery Cost) for commercial
+WHOLESALE_EXPORT_RATE = 0.03  # Placeholder for self-consumption model
+NET_METER_CREDIT_FACTOR = 0.75 # 75% of retail rate for exports
+MACRS_TAX_RATE = 0.21 # Corporate tax rate for commercial projects
+
+# AVG_SUN_HOURS_FOR_AUTOSIZE = 5
+# DERATE_FACTOR_FOR_AUTOSIZE = 0.75
+# SOLAR_SYSTEM_COST_PER_KW = 2500
+# BATTERY_UNIT_KWH = 13.5
+# BATTERY_UNIT_COST = 12000
+# CALCULATOR_SIMPLIFIED_MACRS_RATE = 0.26 # Flat MACRS @26% of (System + Battery Cost) for commercial
+
+# --- NEW: Detailed TOU Schedule Configuration ---
+# This structure is based on the PG&E tariff documents that defines seasons, day types, & peak hours for different rate plans.
+HOLIDAYS_2025 = [ # For rate calculations
+    date(2025, 1, 1), date(2025, 1, 20), date(2025, 2, 17), date(2025, 5, 26),
+    date(2025, 7, 4), date(2025, 9, 1), date(2025, 11, 11), date(2025, 11, 27),
+    date(2025, 12, 25),
+]
+
+TOU_SCHEDULE_CONFIG = {
+    "Residential E-TOU-C": {
+        "description": "Common residential plan with a daily peak period in the evening.",
+        "seasons": {
+            "all_year": {"peak_rate": 0.55, "offpeak_rate": 0.35}
+        },
+        "periods": {
+            "peak": {"days": ["weekday"], "hours": range(16, 21)}, # 4 PM to 9 PM
+        }
+    },
+    "Ag Rate AG-4B (Summer Peak)": {
+        "description": "Agricultural rate with a summer mid-day peak.",
+        "seasons": {
+            "summer": {"peak_rate": 0.29802, "offpeak_rate": 0.16173}, # May-Oct
+            "winter": {"peak_rate": 0.16188, "offpeak_rate": 0.13657} # Winter has a "Partial Peak" - we simplify to peak for this model
+        },
+        "periods": {
+            "peak": {"days": ["weekday"], "hours": range(12, 18)}, # 12 PM to 6 PM
+        }
+    },
+    "Ag Rate AG-5B (Summer Peak)": {
+        "description": "Agricultural rate with lower off-peak prices.",
+        "seasons": {
+            "summer": {"peak_rate": 0.22184, "offpeak_rate": 0.09543}, # May-Oct
+            "winter": {"peak_rate": 0.11743, "offpeak_rate": 0.08633} # Winter has a "Partial Peak"
+        },
+        "periods": {
+            "peak": {"days": ["weekday"], "hours": range(12, 18)}, # 12 PM to 6 PM
+        }
+    }
+}
 
 # AI Helper Texts (Comprehensive - aligning with PDF scoring insights)
 AI_HELPER_TEXTS_REAP = {
@@ -61,13 +116,25 @@ AI_HELPER_TEXTS_CALCULATOR = {
     "backup_pref": "'Essentials' covers critical loads. 'Whole House' aims to power most of your home during an outage."
 }
 
-# ====== ToDo: Add AI_HELPER_TEXTS for REAP flow screens as before ======
-
-# Mock Eligibility Check for Unified Intake [For rural/energy community checks]
+# Mock Eligibility Check for Unified Intake
 ELIGIBILITY_CHECKS_UNIFIED_INTAKE = {
     "55714": {"text": "This ZIP (mock) qualifies as RURAL and is in an ENERGY COMMUNITY! Potential 10% ITC bonus and strong REAP eligibility.", "type": "success"},
     "90210": {"text": "This ZIP (mock) is URBAN and likely NOT in a designated Energy Community for ITC bonus.", "type": "warning"},
     "default": {"text": "Enter a valid 5-digit ZIP from your address for specific eligibility insights.", "type": "info"}
+}
+
+# --- NEW: Static Tooltips / Helper Texts ---
+# This dictionary will hold all static helper texts. It is more reliable and cost-effective than calling an LLM.
+STATIC_TOOLTIPS = {
+    # General Terms
+    "ITC": "The Investment Tax Credit (ITC) is a dollar-for-dollar reduction in federal income taxes for a percentage of the cost of a renewable energy system.",
+    "MACRS": "The Modified Accelerated Cost Recovery System (MACRS) is a tax depreciation system that allows businesses to recover the cost of property over a specified time, providing a significant tax benefit.",
+    "REAP_GRANT": "The USDA Rural Energy for America Program (REAP) provides grants for renewable energy systems and energy efficiency improvements for rural small businesses and agricultural producers.",
+
+    # California CORE Specific Tooltips (from your document)
+    "CA_CORE_PROGRAM": "The CORE program provides upfront, point-of-sale vouchers to help cover the cost of zero-emission off-road equipment in California.",
+    "CA_CORE_ENHANCEMENT": "Small businesses and projects in low-income or disadvantaged communities may receive up to 25% extra in voucher value.",
+    "CA_CORE_NO_SCRAP": "You do not need to scrap old diesel equipment to qualify for the CORE voucher."
 }
 
 
@@ -86,7 +153,7 @@ def generate_progress_bar_markdown(screen_flow_map, current_screen_key, total_st
     return " > ".join(progress_display_list)
 
 
-# --- NEW: DETAILED REAP SCORING ENGINE (Replaces simplified formula) ---
+# --- DETAILED REAP SCORING ENGINE (Replaces simplified formula) ---
 def calculate_detailed_reap_score(form_data):
     """
     Calculates REAP score based on the multi-category "Scoring Breakdown by Field" PDF.
@@ -108,7 +175,7 @@ def calculate_detailed_reap_score(form_data):
     is_ec_mock = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("energy community") > 0
     doc_score = form_data.get('mock_doc_score_reap', 0) # Still mocked for now
     
-    # 1. Applicant Type/Prior History (Max 15 pts)
+    # 1. Applicant Type/Prior History (Max 15 pts) - From REAP PDF page 3 & 4
     max_possible_score += 15
     applicant_pts = 0
     if reap_history == "First-time applicant":
@@ -136,9 +203,9 @@ def calculate_detailed_reap_score(form_data):
     score += project_priority_pts
     breakdown.append(f"Project Priority: {project_priority_pts}/15 pts")
 
-    # 3. Technology Impact (Varies 0-10 pts)
+    # 3. Technology Impact (Varies 0-10 pts) - From REAP PDF page 3
     # Criteria: "Less common or 'underutilized' technologies may receive priority consideration.
-    # Anaerobic digesters, geothermal, and biomass often score well."
+    # Anaerobic digesters, geothermal, and biomass often score well!
     max_possible_score += 10
     tech_impact_pts = 0
     if technology in ["Anaerobic Digester", "Geothermal"]:
@@ -182,7 +249,7 @@ def calculate_detailed_reap_score(form_data):
     cost_eff_pts = 0
     other_incentives_count = len([p for p in st.session_state.get("incentives_to_model", []) if p not in ['usda_reap_grant', 'itc_macrs']])
     if other_incentives_count > 0:
-        cost_eff_pts = 5 + min(other_incentives_count, 5) # 5 base points + 1 per extra incentive up to 10
+        cost_eff_pts = 5 + min(other_incentives_count, 5)   # 5 base points + 1 per extra incentive up to 10
     score += cost_eff_pts
     breakdown.append(f"Cost Effectiveness (Stacking): {cost_eff_pts}/10 pts")
 
@@ -190,7 +257,58 @@ def calculate_detailed_reap_score(form_data):
     return score, breakdown, normalized_score
 
 
-# --- NEW: Incentive Eligibility Engine ---
+# --- NEW: TOU Rate Schedule Generator ---
+def generate_hourly_rate_schedule(rate_plan: str):
+    """
+    Generates a NumPy array of 8760 hourly electricity rates based on a selected TOU plan.
+    """
+    if rate_plan not in TOU_SCHEDULE_CONFIG:
+        # Fallback to a flat rate: if rate_plan is not found
+        return np.full(8760, 0.18) 
+
+    plan = TOU_SCHEDULE_CONFIG[rate_plan]
+    timestamps = pd.to_datetime(pd.date_range("2025-01-01", periods=8760, freq="h"))
+    
+    hourly_rates = np.zeros(8760)
+
+    for i, ts in enumerate(timestamps):
+        # Determine Season
+        season = "winter"
+        if 5 <= ts.month <= 10:   # May-to-Oct is Summer
+            season = "summer"
+        
+        # Use correct season or fall back safely
+        if season in plan["seasons"]:
+            season_rates = plan["seasons"][season]
+        elif "all_year" in plan["seasons"]:
+            season_rates = plan["seasons"]["all_year"]
+        else:
+            raise ValueError(f"Rate plan '{rate_plan}' is missing season '{season}' and has no 'all_year' fallback.")
+    
+       # Use "all_year" if specific season not defined
+        peak_rate = season_rates["peak_rate"]
+        offpeak_rate = season_rates["offpeak_rate"]
+        
+        # Determine Day Type
+        is_weekday = ts.dayofweek < 5   # Monday=0, Sunday=6
+        is_holiday = ts.date() in HOLIDAYS_2025
+        
+        # Default to off-peak
+        rate = offpeak_rate
+        
+        # Check if it's a peak period
+        peak_period = plan["periods"]["peak"]
+        if ts.hour in peak_period["hours"]:
+            if ("weekday" in peak_period["days"] and is_weekday and not is_holiday) or \
+               ("everyday" in peak_period["days"]):
+                rate = peak_rate
+        
+        hourly_rates[i] = rate
+        
+    return hourly_rates
+
+
+# --- Incentive Eligibility Engine ---
 def check_incentive_eligibility(form_data):
     """
     Iterates through all defined incentives and checks eligibility based on form_data.
@@ -202,10 +320,10 @@ def check_incentive_eligibility(form_data):
     # In a real app, these would come from more robust checks
     zip_for_check = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5]
     form_data['is_rural_mock'] = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("rural") > 0
-    form_data['location_state_mock'] = "CA" if zip_for_check.startswith("9") else "Other" # Very simple mock
+    form_data['location_state_mock'] = "CA" if zip_for_check.startswith("9") else "Other"   # Very simple mock
 
     for incentive in INCENTIVE_PROGRAMS:
-        is_eligible = True # Assume eligible until a rule fails
+        is_eligible = True   # Assume eligible until a rule fails
         for rule in incentive["eligibility_rules"]:
             field = rule["field"]
             condition = rule["condition"]
@@ -213,9 +331,9 @@ def check_incentive_eligibility(form_data):
             
             user_value = form_data.get(field)
             
-            # --- Rule Evaluation Logic ---
+            # Rule Evaluation Logic ---
             if user_value is None:
-                is_eligible = False; break # Can't evaluate if data is missing
+                is_eligible = False; break   # Can't evaluate if data is missing
 
             if condition == "is_one_of":
                 if user_value not in required_value: is_eligible = False; break
@@ -233,7 +351,52 @@ def check_incentive_eligibility(form_data):
     return eligible_incentives
 
 
-# --- NEW: Master Financial Calculation Engine for Final Dashboard (Screen 6) ---
+# --- NEW for Week 2/Screen 6: Detailed MACRS & Bonus Depreciation Engine ---
+def calculate_detailed_depreciation_benefit(
+    depreciable_basis: float,
+    placed_in_service_year: int,
+    assumed_tax_rate: float = 0.24   # A reasonable default for commercial
+) -> dict:
+    """
+    Calculates the detailed Year 1 tax benefit from Bonus and MACRS depreciation.
+    Follows the logic from "Step 6" of the Order of Operations.
+    """
+    if depreciable_basis <= 0:
+        return {
+            "bonus_depreciation_value": 0.0,
+            "macrs_year1_value": 0.0,
+            "year_1_total_depreciation_tax_benefit": 0.0,
+            "bonus_depreciation_rate": 0.0
+        }
+
+    # Bonus depreciation rates phase down over time
+    bonus_rates = {2022: 1.00, 2023: 0.80, 2024: 0.60, 2025: 0.40, 2026: 0.20}
+    # For years beyond 2026, the bonus is 0.
+    bonus_dep_rate = bonus_rates.get(placed_in_service_year, 0.0)
+    
+    # 1. Calculate Bonus Depreciation
+    bonus_depreciation_value = depreciable_basis * bonus_dep_rate
+    
+    # 2. Calculate Remaining Basis for standard MACRS
+    remaining_basis_for_macrs = depreciable_basis - bonus_depreciation_value
+    
+    # 3. Apply Year 1 of the 5-year MACRS schedule to the remaining basis
+    macrs_year1_rate = 0.20   # For a 5-year property, Year 1 is 20%
+    macrs_year1_value = remaining_basis_for_macrs * macrs_year1_rate
+    
+    # 4. The total tax BENEFIT is the sum of depreciation values multiplied by the tax rate
+    total_year1_depreciation_value = bonus_depreciation_value + macrs_year1_value
+    year_1_tax_benefit = total_year1_depreciation_value * assumed_tax_rate
+    
+    return {
+        "bonus_depreciation_value": bonus_depreciation_value,
+        "macrs_year1_value": macrs_year1_value,
+        "year_1_total_depreciation_tax_benefit": year_1_tax_benefit,
+        "bonus_depreciation_rate": bonus_dep_rate
+    }
+
+
+# --- Master Financial Calculation Engine for Final Dashboard (Screen 6) ---
 def perform_final_incentive_stack_calculations(form_data):
     """
     Orchestrates the full, compliant calculation following the Order of Operations
@@ -247,13 +410,13 @@ def perform_final_incentive_stack_calculations(form_data):
         "is_fed_share_compliant": True,
         "correct_depreciable_basis": 0.0,
         "year_1_depreciation_tax_benefit": 0.0,
-        "other_grant_values": {}, # To store results of other selected grants
+        "depreciation_details": {},  # To store the detailed depreciation breakdown for display
+        "other_grant_values": {},   # To store results of other selected grants
         "total_grant_and_tax_benefits": 0.0,
         "final_net_cost": 0.0,
         "final_roi": 0.0,
-        "final_payback": float('inf'), # Default to infinity
-        "cash_positive_note": "" # New key to hold special messages
-        #"final_payback": 0.0
+        "final_payback": float('inf'),  # Default to infinity
+        "cash_positive_note": ""   # Key to hold special messages
     }
 
     # Step 1: Establish Total Project Cost (CapEx)
@@ -295,23 +458,23 @@ def perform_final_incentive_stack_calculations(form_data):
     results["correct_depreciable_basis"] = correct_depreciable_basis
 
     # Step 6: Apply Detailed MACRS and Bonus Depreciation (for Commercial)
+    depreciation_details = {}
     year_1_dep_benefit = 0.0
-    if form_data.get("unified_business_type") == "Commercial / Business":
-        # Assume project placed in service in 2024 (60% bonus dep) - This should be a user input
-        placed_in_service_year = 2025 
-        bonus_rates = {2023: 0.80, 2024: 0.60, 2025: 0.40, 2026: 0.20}
-        bonus_dep_rate = bonus_rates.get(placed_in_service_year, 0.0)
+    if form_data.get("unified_business_type") in ["Commercial / Business", "Farm / Agriculture"]:
+        # We need a "Placed in Service Year" - let's add it to the `form_data` over Screen 5
+        # For now, we will default to 2024 for a robust calculation.
+        placed_in_service_year = int(form_data.get("placed_in_service_year", 2024))
         
-        bonus_depreciation_value = correct_depreciable_basis * bonus_dep_rate
-        remaining_macrs_basis = correct_depreciable_basis - bonus_depreciation_value
-        macrs_year1_rate = 0.20 # 5-year MACRS, Year 1 is 20%
-        macrs_year1_value = remaining_macrs_basis * macrs_year1_rate
-        
-        assumed_tax_rate = 0.24 # Should be a user input or config
-        year_1_dep_benefit = (bonus_depreciation_value + macrs_year1_value) * assumed_tax_rate
+        depreciation_details = calculate_detailed_depreciation_benefit(
+            depreciable_basis=correct_depreciable_basis,
+            placed_in_service_year=placed_in_service_year
+        )
+        year_1_dep_benefit = depreciation_details.get("year_1_total_depreciation_tax_benefit", 0.0)
+    
     results["year_1_depreciation_tax_benefit"] = year_1_dep_benefit
+    results["depreciation_details"] = depreciation_details # Store the full breakdown
 
-    # --- NEW: Calculate other selected grants ---
+    # --- Step 7. Calculate other selected grants ---
     other_grant_values = {}
     selected_program_ids = st.session_state.get("incentives_to_model", [])
     for program in INCENTIVE_PROGRAMS:
@@ -321,7 +484,7 @@ def perform_final_incentive_stack_calculations(form_data):
             calc_func = program.get("calculation_logic")
             if not calc_func: continue
 
-            # --- ROBUST DYNAMIC ARGUMENT MAPPING ---
+            # ROBUST DYNAMIC ARGUMENT MAPPING ---
             # Inspect the function to see what arguments it needs
             required_args = inspect.getfullargspec(calc_func).args
             
@@ -332,21 +495,37 @@ def perform_final_incentive_stack_calculations(form_data):
                 # The key in form_data is constructed as `program_id_arg_name`
                 # But our lambda definition is generic. Let's adjust the key lookup.
                 # The keys in form_data are like 'vapg_vapg_project_cost'. Let's find the base name.
-                # A better way is to define keys in incentive_definitions.py consistently.
+
+                # A better way is to define keys in `incentive_definitions.py` consistently.
                 # Our current key is f"{program['id']}_{inp['id']}". Let's assume the lambda arg matches inp['id'].
+
                 # Find the input definition for this argument
                 input_def = next((inp for inp in program.get("calculation_inputs", []) if inp['id'] == arg_name), None)
-                if input_def:
-                    form_key = f"{program['id']}_{arg_name}"
-                    if form_key in form_data:
-                        try:
-                           # Ensure correct type for calculation
-                           args_to_pass[arg_name] = float(form_data[form_key])
-                        except (ValueError, TypeError):
-                           st.error(f"Invalid input for {arg_name} in {program['name']}. Expected a number.")
-                           all_inputs_found = False; break
-                    else:
-                        all_inputs_found = False; break # Missing input
+                if not input_def:
+                    all_inputs_found = False; break
+                
+                form_key = f"{program['id']}_{arg_name}"
+                user_value = form_data.get(form_key)
+                
+                if user_value is None:
+                    all_inputs_found = False; break
+                    
+                # INTELLIGENT TYPE CASTING ---
+                expected_type = input_def.get("data_type", "string") # Default to string if not specified
+                
+                try:
+                    if expected_type == "float":
+                        args_to_pass[arg_name] = float(user_value)
+                    elif expected_type == "integer":
+                        args_to_pass[arg_name] = int(user_value)
+                    elif expected_type == "boolean":
+                        # st.toggle/checkbox values are already bools, but this is a safe cast
+                        args_to_pass[arg_name] = bool(user_value)
+                    else: # "string"
+                        args_to_pass[arg_name] = str(user_value)
+                except (ValueError, TypeError):
+                    st.error(f"Invalid input for '{input_def['label']}'. Expected a {expected_type}.")
+                    all_inputs_found = False; break # Missing input
             
             if all_inputs_found:
                 try:
@@ -356,35 +535,34 @@ def perform_final_incentive_stack_calculations(form_data):
                     other_grant_values[program['name']] = f"Calc Error: {e}"
             else:
                  other_grant_values[program['name']] = "Missing Inputs"
-            # try:
-            #     # The lambda function in the definition calculates the value
-            #     value = program["calculation_logic"](form_data)
-            #     other_grant_values[program['name']] = value
-            # except Exception as e:
-            #     other_grant_values[program['name']] = f"Calculation Error: {e}"
+            
     results["other_grant_values"] = other_grant_values
     
-    # --- Final Summary Calculations ---
+    # Step 8: Calculate FINAL Annual Savings from the full dispatch model
+    # The calculator results are used as the basis for the new & accurate savings value.
+    calc_results = st.session_state.get("calculator_results_display", {})
+    financials_from_calc = calc_results.get("financials", {})
+    annual_savings_final = financials_from_calc.get("total_annual_savings", 0.0)
+
+    # Step 9. Final Summary Calculations
     total_other_grants_value = sum(v for v in other_grant_values.values() if isinstance(v, (int, float)))
     
     total_benefits = reap_grant_final + total_itc_value + year_1_dep_benefit + total_other_grants_value
     results["total_grant_and_tax_benefits"] = total_benefits
 
     # After all benefits are calculated:
-    total_project_cost = results.get("total_project_cost", 0)
     total_benefits = results.get("total_grant_and_tax_benefits", 0)
     
     # Net cost considers all grants and tax benefits
     net_cost_final = total_project_cost - total_benefits
     results["final_net_cost"] = net_cost_final
 
-    annual_savings = st.session_state.get("calculator_results_display", {}).get("financials", {}).get('annual_savings_calculator', 0)
-    if annual_savings > 0:
+    if annual_savings_final > 0:
         
         if net_cost_final > 0:
             # Standard case: There is a net cost to recover.
-            results["final_roi"] = (annual_savings / net_cost_final) * 100
-            results["final_payback"] = net_cost_final / annual_savings
+            results["final_roi"] = (annual_savings_final / net_cost_final) * 100
+            results["final_payback"] = net_cost_final / annual_savings_final
         else:
             # Windfall case: Incentives meet or exceed project cost.
             # ROI is effectively infinite, and payback is immediate.
@@ -397,10 +575,22 @@ def perform_final_incentive_stack_calculations(form_data):
         # No savings case: Payback is infinite, ROI is 0 or negative.
         results["final_roi"] = 0.0
         results["final_payback"] = float('inf')
-    #     results["final_roi"] = (annual_savings / net_cost_final) * 100 if net_cost_final > 0 else float('inf')
-    #     results["final_payback"] = net_cost_final / annual_savings
-    # else:
-    #     results["final_roi"] = 0
-    #     results["final_payback"] = float('inf')
+    
+    # --- NEW: Preparing data specifically for the Waterfall Chart ---
+    waterfall_steps = {
+        "Total Project Cost": total_project_cost,
+        "REAP Grant": -reap_grant_final, # Negative because it reduces cost
+        "Federal ITC": -total_itc_value,
+        "Depreciation Benefit (Y1)": -year_1_dep_benefit
+    }
+
+    # Add other grants to the waterfall
+    for grant_name, grant_value in results.get("other_grant_values", {}).items():
+        if isinstance(grant_value, (int, float)) and grant_value > 0:
+            # Shorten name for chart clarity if needed
+            short_name = grant_name.replace(" Program", "").replace(" Grant", "")
+            waterfall_steps[short_name] = -grant_value
+
+    results["waterfall_chart_data"] = waterfall_steps
         
     return results
