@@ -1,6 +1,6 @@
 import streamlit as st
 import boto3
-import logging
+import logging, os
 from sharkbite_engine.solar_calculator_logic import NREL_API_KEY_HOLDER, perform_solar_battery_calculations
 from sharkbite_engine.ui_login_screen import display_login_screen
 from sharkbite_engine.ui_unified_intake_screen import display_unified_intake_screen
@@ -16,8 +16,16 @@ from sharkbite_engine.ui_reap_flow_screens import (
 
 st.set_page_config(page_title="🦈 Sharkbite Platform v2.0")
 
-with open('assets/custom_style.css') as f:
-    st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+# --- Constructs an absolute path to the CSS file ---
+# This ensures the file can be found whether running the app directly or via pytest.
+try:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    css_file_path = os.path.join(script_dir, 'assets/custom_style.css')
+    with open(css_file_path) as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+except FileNotFoundError:
+    # Optional: Add a fallback or warning if the CSS is missing
+    st.warning("custom_style.css not found. The app will run with default styling.")
 
 
 # --- NREL API Key Setup ---
@@ -159,7 +167,7 @@ if __name__ == "__main__":
     current_screen = st.session_state.current_screen
     next_screen_signal = None  # To capture navigation requests from UI functions
 
-    # --- NEW: Initialize Bedrock client only when entering the AI-powered part of the flow ---
+    # --- Initialize Bedrock client only when entering the AI-powered part of the flow ---
     if current_screen in ['ppa_analyzer', 'incentive_preview', 'multi_grant_stacker', 'final_incentive_dashboard'] \
        and st.session_state.bedrock_client is None:
         

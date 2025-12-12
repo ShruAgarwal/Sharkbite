@@ -4,10 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sharkbite_engine.ui_reap_flow_screens import set_screen_and_rerun
 from sharkbite_engine.claude_service import get_ai_ppa_analysis
+from sharkbite_engine.utils import TOOLTIPS
 
 def display_ppa_analyzer_screen():
     st.title("⚖️ PPA vs. System Ownership Analyzer")
-    st.markdown("Compare the long-term financial outcomes of a Power Purchase Agreement (PPA) versus owning your solar system.")
+    st.markdown("**Compare the long-term financial outcomes of a Power Purchase Agreement (PPA) versus owning your solar system.**")
     st.markdown("---")
 
     form_data = st.session_state.form_data
@@ -35,12 +36,14 @@ def display_ppa_analyzer_screen():
              
             st.error(f"The annual production data from the calculator seems invalid ({annual_production_kwh_y1:,.0f} kWh for a {system_size_kw} kW system). Please go back and recalculate.", icon="⚠️")
         
-            if st.button("⬅️ Back to Main Calculator"): set_screen_and_rerun("solar_battery_calculator")
+            if st.button("⬅️ Back to Main Calculator"):
+                set_screen_and_rerun("solar_battery_calculator")
             st.stop()
 
     except (ValueError, TypeError):
         st.error("Could not load valid project data. Please complete the Solar & Battery Calculator first.", icon="❗")
-        if st.button("⬅️ Back to Main Calculator"): set_screen_and_rerun("solar_battery_calculator")
+        if st.button("⬅️ Back to Main Calculator"):
+            set_screen_and_rerun("solar_battery_calculator")
         st.stop()
     
     st.subheader("Your Project Data (from Solar Calculator)")
@@ -51,7 +54,7 @@ def display_ppa_analyzer_screen():
     col3.metric("Your Current Utility Rate", f"${utility_rate_y1:.3f}/kWh")
     col4.metric("Ownership Net Cost (Y1)",
                 f"${ownership_net_cost_y1:,.0f}",
-                help="Your estimated cost to own the system after all grants and tax credits.")
+                help=TOOLTIPS.get("ownership_net_cost_y1"))
     st.markdown("---")
 
     # --- 2. User Inputs for PPA and Future Projections ---
@@ -61,21 +64,21 @@ def display_ppa_analyzer_screen():
     with col_a:
         st.markdown("#### PPA Terms")
         ppa_rate_y1 = st.number_input("PPA Rate Year 1 ($/kWh)", 0.010, 1.000, 0.160, 0.001, format="%.3f",
-                                      help="The cost per kWh you pay the PPA provider in the Year 1.")
+                                      help=TOOLTIPS.get("ppa_rate_y1"))
         ppa_escalator = st.number_input("Annual PPA Rate Escalator (%)", 0.0, 5.0, 2.5, 0.1, format="%.1f",
-                                        help="The percentage your PPA rate increases each year.")
+                                        help=TOOLTIPS.get("ppa_escalator"))
 
     with col_b:
         st.markdown("#### Utility Assumptions")
         utility_escalator = st.number_input("Expected Annual Utility Rate Increase (%)", 0.0, 10.0, 2.0, 0.1, format="%.1f",
-                                            help="Your estimate for how much utility rates will rise each year.")
+                                            help=TOOLTIPS.get("utility_escalator"))
 
     # Add inputs for O&M and Inverter Replacement for Ownership model
     with st.expander("Advanced Ownership Cost Assumptions"):
         owner_om_cost_per_kw_yr = st.number_input("Annual O&M Cost ($/kW/year)", 0, 50, 20,
-                                                  help="Typical operations and maintenance cost for an owned system.")
+                                                  help=TOOLTIPS.get("owner_om_cost_per_kw_yr"))
         owner_inverter_replacement_cost = st.number_input("Inverter Replacement Cost ($)", 0, 10000, 2500,
-                                                          help="Estimated cost to replace the inverter, typically around year 12.")
+                                                          help=TOOLTIPS.get("owner_inverter_replacement_cost"))
         owner_inverter_replacement_year = st.slider("Inverter Replacement Year", 10, 15, 12)
 
     # --- 3. Run 25-Year Cash Flow Analysis ---
@@ -95,7 +98,7 @@ def display_ppa_analyzer_screen():
     value_of_solar_produced = production_over_time * utility_rates_over_time
     ownership_annual_savings = value_of_solar_produced - annual_om_costs
     ownership_annual_cashflow = ownership_annual_savings - inverter_cost_schedule
-    ownership_total_savings = np.sum(ownership_annual_cashflow)
+    ownership_total_savings = np.sum(ownership_annual_cashflow) # - ownership_net_cost_y1
 
     # --- PPA Model Calculations ---
     # PPA Pricing Structure & Financial Calculation
@@ -123,6 +126,7 @@ def display_ppa_analyzer_screen():
 
     # --- Render the Chart with Matplotlib ---
     st.subheader("📈 Cumulative Cost & Effective Rate Over Time")
+    
     # Create the DataFrame with the Year as the index
     # The chart data is now based on realistic, cumulative costs.
     # np.full_like -- Return a full array with the same shape and type as a given array.
@@ -189,13 +193,20 @@ def display_ppa_analyzer_screen():
     st.pyplot(fig)
     st.caption("Solid lines represent cumulative costs (left axis). Dotted lines represent the effective blended rate per kWh over time (right axis).")
     
-    # --- NEW: AI Analyst Integration ---
+    # --- NEW: Save results to session state for the PDF report generator ---
+    st.session_state.ppa_results = {
+        "summary_df": summary_df,
+        "matplotlib_chart_fig": fig
+    }
+
+    # --- AI Analyst Integration ---
     st.markdown("---")
     st.subheader("🤖 AI-Powered Trade-Off Analysis")
     st.info("Leverage AI to get a sophisticated summary of the financial trade-offs between these two options based on your specific project data.")
 
-    if st.button("Generate AI Analyst Summary", icon=":material/smart_toy:", key="ppa_ai_analyst_button_final",
-                 type="secondary", use_container_width=True):
+    if st.button("Generate AI Analyst Summary", icon=":material/smart_toy:",
+                 key="ppa_ai_analyst_button_final", type="secondary",
+                 use_container_width=True):
         # Prepare the context dictionaries for Claude
         ppa_vs_ownership_data = {
             "Ownership Model Upfront Net Cost ($)": ownership_net_cost_y1,
@@ -211,10 +222,10 @@ def display_ppa_analyzer_screen():
             "heat_pump_annual_kwh": (form_data.get("heat_pump_btu_yr", 0) / 3412) / form_data.get("heat_pump_cop", 3.0)
         }
         
-        # Call the new, specific AI function
+        # Call the specific AI function
         st.session_state.ai_ppa_analysis_result = get_ai_ppa_analysis(ppa_vs_ownership_data, future_load_data)
         
-    # --- Display the NEW structured result ---
+    # --- Display the structured result ---
     if 'ai_ppa_analysis_result' in st.session_state and st.session_state.ai_ppa_analysis_result:
         ai_analysis = st.session_state.ai_ppa_analysis_result
         
@@ -233,7 +244,7 @@ def display_ppa_analyzer_screen():
                 st.markdown("### Impact of Your Future Electrification Plans")
                 st.write(ai_analysis.get('future_load_impact', 'N/A'))
 
-    # --- NEW: Debugging Expander ---
+    # --- Debugging Expander ---
     with st.expander("Show Calculation Inputs & Intermediate Values"):
         st.write("**Inputs used for calculation:**")
         st.json({
@@ -247,11 +258,11 @@ def display_ppa_analyzer_screen():
             "utility_escalator": utility_escalator,
             "ppa_term_years": ppa_term_years
         })
-        st.write("**Intermediate annual cost arrays (first 5 years):**")
+        st.write("**Intermediate annual cost arrays (first 10 years):**")
         st.dataframe({
-            "Year": years[:5],
-            "PPA_Cost_Annual": ppa_annual_payment[:5],
-            "Utility_Cost_Annual": utility_cost_without_solar_annual[:5]
+            "Year": years[:10],
+            "PPA_Cost_Annual": ppa_annual_payment[:10],
+            "Utility_Cost_Annual": utility_cost_without_solar_annual[:10]
         })
 
 

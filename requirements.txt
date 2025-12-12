@@ -4,3 +4,5 @@ pandas==2.3.0
 boto3==1.40.40
 matplotlib==3.10.6
 plotly==6.3.0
+fpdf2==2.8.5
+pytest==9.0.2

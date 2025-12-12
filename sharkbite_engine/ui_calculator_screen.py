@@ -4,16 +4,19 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sharkbite_engine.utils import (
-    AI_HELPER_TEXTS_CALCULATOR, generate_progress_bar_markdown,
-    BATTERY_COST_PER_KWH, DEFAULT_DC_AC_RATIO,
-    NET_METER_CREDIT_FACTOR, TOU_SCHEDULE_CONFIG
+    TOOLTIPS,
+    generate_progress_bar_markdown,
+    BATTERY_COST_PER_KWH,
+    DEFAULT_DC_AC_RATIO,
+    NET_METER_CREDIT_FACTOR,
+    TOU_SCHEDULE_CONFIG
 )
 from sharkbite_engine.ui_unified_intake_screen import SCREEN_FLOW_MAP_NEW
 
 
 def display_solar_battery_calculator_screen():
-    st.title("🛠️ Solar & Battery Calculator (New S2)")
-    st.markdown("Refine system size and see initial savings/ROI (using simplified MACRS).")
+    st.title("🛠️ Solar & Battery Calculator")
+    st.markdown("**Refine system size and see initial savings/ROI (using simplified MACRS).**")
     
     progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'solar_battery_calculator')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
@@ -31,7 +34,6 @@ def display_solar_battery_calculator_screen():
         st.write(f"**Rate:** ${form_data.get('unified_electricity_rate', 0.0):.2f}/kWh")
     st.markdown("---")
 
-
     with st.container(border=True):
         # System Sizing + Battery Refinement
         sb1, sb2 = st.columns(2)
@@ -43,33 +45,36 @@ def display_solar_battery_calculator_screen():
                 "Confirm or Adjust PV System Size (kW)",
                 1.0, 500.0, initial_autosized_kw, 0.1,
                 key="s2_refined_size_input",
-                help=AI_HELPER_TEXTS_CALCULATOR.get("system_size_kw")
+                help=TOOLTIPS.get("system_size_kw")
             )
 
             # Inverter Size Input
             default_inverter_size = form_data.get("calculator_refined_system_size_kw", 8.0) / DEFAULT_DC_AC_RATIO
             form_data["inverter_size_kw"] = st.number_input("Inverter AC Size (kW)", 1.0, 500.0,
                                                             default_inverter_size, 0.1,
-                                                            help="Often sized smaller than the DC array (e.g., DC/AC ratio of 1.25).")
+                                                            help=TOOLTIPS.get("inverter_size_kw"))
 
         with sb2:
             st.subheader("🔋 Battery Backup")
             backup_options = ["No Backup", "Essentials Only (10 kWh)", "Whole House Backup (25 kWh)"]
             current_backup_pref = form_data.get("calculator_backup_pref", backup_options[0])
             form_data["calculator_backup_pref"] = st.selectbox(
-                "Battery Backup Preference", options=backup_options,
+                "Battery Backup Preference",
+                options=backup_options,
                 index=backup_options.index(current_backup_pref),
-                key="s2_backup_pref_select", help=AI_HELPER_TEXTS_CALCULATOR.get("backup_pref")
+                key="s2_backup_pref_select",
+                help=TOOLTIPS.get("calculator_backup_pref")
             )
 
             form_data["min_battery_reserve_pct"] = st.slider(
             "Minimum Battery Reserve (%)", 0, 100, 20,
-            help="Set a minimum charge level to maintain for backup during outages."
+            help=TOOLTIPS.get("min_battery_reserve_pct")
             )
 
         form_data["override_battery_cost"] = st.number_input(
             "Battery Turn-key Cost $/kWh (Optional)", 400, 1200, BATTERY_COST_PER_KWH, 25,
-            key="s2_adv_battery_cost", help="Override the default battery cost."
+            key="s2_adv_battery_cost",
+            help=TOOLTIPS.get("override_battery_cost")
         )
 
     # --- "Future Load" Modeling & Advanced TOU Settings UI Inputs ---
@@ -104,14 +109,16 @@ def display_solar_battery_calculator_screen():
             "Utility Rate Plan",
             options=rate_plan_options,
             key="s2_rate_plan_final_select_v2",
-            help="This determines the peak/off-peak rates and times used in the financial model."
+            help=TOOLTIPS.get("rate_plan")
         )
         selected_plan_desc = TOU_SCHEDULE_CONFIG[form_data["rate_plan"]]["description"]
         st.caption(selected_plan_desc)
 
 
-    analysis_button_pressed = st.button("Calculate Initial Proposal", type="primary",
-                                        icon=":material/finance:", use_container_width=True,
+    analysis_button_pressed = st.button("Calculate Initial Proposal",
+                                        type="primary",
+                                        icon=":material/finance:",
+                                        use_container_width=True,
                                         key="s2_calculate_roi_signal_btn")
     
     if analysis_button_pressed:
@@ -119,7 +126,7 @@ def display_solar_battery_calculator_screen():
         st.session_state.calculator_results_display = None # Clear old results before rerun
         st.rerun() # Let sharkbite_app handle processing
 
-    # Displays results if populated by `sharkbite_app.py`
+    # =========== Displays results if populated by `sharkbite_app.py` ===========
     if st.session_state.get("calculator_results_display"):
         results = st.session_state.calculator_results_display
         inputs = st.session_state.get("calculator_inputs_for_processing", {})
@@ -133,12 +140,6 @@ def display_solar_battery_calculator_screen():
             st.error(f"PVWatts: {results['pv_error']}", icon="☀️")
         elif results.get("ac_annual") is not None:
             st.info(f"Est. Annual Solar Production: **{results['ac_annual']:,.0f} kWh**", icon="☀️")
-            
-            # Display monthly breakdown if 'ac_monthly' is in results
-            # if results.get("ac_monthly"):
-            #      df_prod = pd.DataFrame({"Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], "kWh Produced": results["ac_monthly"]})
-            #      with st.expander("View Monthly Production Estimate"):
-            #          st.dataframe(df_prod, hide_index=True, use_container_width=True)
 
         st.info(f"⚡ Future Electrification adds **{results['future_load_kwh']:,.0f} kWh** to your annual usage.", icon="🔌")
             
@@ -159,13 +160,13 @@ def display_solar_battery_calculator_screen():
         
         with kpi_col1:
             st.metric("Self-Consumption Rate", f"{results.get('self_consumption_rate_percent', 0):.1f}%",
-                        help="Percentage of your solar energy used directly on-site (by loads or battery).")
+                        help=TOOLTIPS.get("self_consumption_rate"))
         with kpi_col2:
             st.metric("Grid Independence Rate", f"{results.get('grid_independence_rate_percent', 0):.2f}%",
-                        help="Percentage of your total electricity needs met by your own solar and battery.")
+                        help=TOOLTIPS.get("grid_independence_rate"))
         with kpi_col3:
             st.metric("Net Grid Interaction (kWh/yr)", f"{results.get('net_grid_interaction_kwh', 0):,.0f}",
-                        help="Total kWh imported from the grid minus total kWh exported. A lower number means less reliance on the grid.")
+                        help=TOOLTIPS.get("net_grid_interaction"))
     
         financials = results.get("financials", {})
         if financials:
@@ -215,6 +216,7 @@ def display_solar_battery_calculator_screen():
         tab1, tab2, tab3 = st.tabs(["📈 Hourly Energy Flow Chart", "📊 Monthly Cash-Flow Projection", "💸 Comparison Of Estimated Monthly Bill"])
         with tab1:
             st.subheader("How Your Energy Needs are Met Throughout a Typical Summer Day")
+            
             # Select a representative summer day for visualization (e.g., July 15th)
             day_of_year = 195 
             start_hour = day_of_year * 24
@@ -280,48 +282,62 @@ def display_solar_battery_calculator_screen():
                     fig.update_yaxes(title_text="<b>Energy Flow (kWh)</b>", secondary_y=False)
                     fig.update_yaxes(title_text="<b>Solar Production (kWh)</b>", secondary_y=True)
 
+                    # NEW: Save the underlying data in session state for the PDF report generator
+                    st.session_state.hourly_energy_flow_chart_data = chart_df
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption("This chart shows how your home's energy needs (black dotted line) are met throughout the day. The stacked bars show the source: first by solar, then by battery, and finally by the grid. The orange line shows your total available solar energy.")
                     
                 except Exception as e:
                     st.warning(f"Could not generate the daily energy flow chart. Error: {e}", icon="📊")
 
-        if 'monthly_cash_flow_df' in financials:    
-            monthly_df = financials.get('monthly_cash_flow_df')
-            if monthly_df is not None and not monthly_df.empty:
-                with tab2:
+            with tab2:
+                if 'monthly_cash_flow_df' in financials:
                     st.subheader("Breakdown of Monthly Energy Costs & Savings (Year 1)")
-                    fig1 = px.bar(
-                        monthly_df,
-                        barmode='stack',
-                        x=monthly_df.index,
-                        y=["Cost Avoided by Solar ($)", "Cost Avoided by Battery ($)", "Remaining Grid Import Cost ($)"],
-                        labels={"value": "Cost / Savings ($)", "index": "Month", "variable": "Component"}
-                    )
-                    fig1.add_scatter(x=monthly_df.index, y=monthly_df["Original Bill Cost ($)"], mode='lines', name='Original Bill Cost', line=dict(dash='dash', color='red'))
-                    st.plotly_chart(fig1, use_container_width=True)
-                           
-                with tab3:
-                    fig2 = go.Figure()
-                    fig2.add_trace(go.Bar(x=monthly_df.index, y=monthly_df["Monthly Savings ($)"], name='Monthly Utility Savings'))
-                    fig2.add_trace(go.Bar(x=monthly_df.index, y=-monthly_df["Loan_Payment_$"], name='Loan Payment (Cost)')) # Show as negative
-                    fig2.add_trace(go.Scatter(x=monthly_df.index, y=monthly_df["Net_Cash_Flow_$"], mode='lines+markers', name='Net Cash Flow', line=dict(color='green')))
-                    fig2.update_layout(barmode='relative', title_text="Monthly Savings, Loan Payment, and Net Cash Flow", yaxis_title="Amount ($)")
-                    st.plotly_chart(fig2, use_container_width=True)
-                    st.caption("This chart shows your estimated monthly utility savings versus a simplified loan payment, and the resulting net cash flow.")
                     
-                
+                    monthly_df = financials.get('monthly_cash_flow_df')
+                    if monthly_df is not None and not monthly_df.empty:
+                        fig1 = px.bar(
+                            monthly_df,
+                            barmode='stack',
+                            x=monthly_df.index,
+                            y=["Cost Avoided by Solar ($)", "Cost Avoided by Battery ($)", "Remaining Grid Import Cost ($)"],
+                            labels={"value": "Cost / Savings ($)", "index": "Month", "variable": "Component"}
+                        )
+                        fig1.add_scatter(x=monthly_df.index, y=monthly_df["Original Bill Cost ($)"], mode='lines', name='Original Bill Cost', line=dict(dash='dash', color='red'))
+                        st.plotly_chart(fig1, use_container_width=True)
+                    else:
+                        st.warning("Could not generate monthly cash flow data.")
+                        
+            with tab3:
+                if 'monthly_cash_flow_df' in financials:
+                    
+                    monthly_df = financials.get('monthly_cash_flow_df')
+                    if monthly_df is not None and not monthly_df.empty:
+                        fig2 = go.Figure()
+                        fig2.add_trace(go.Bar(x=monthly_df.index, y=monthly_df["Monthly Savings ($)"], name='Monthly Utility Savings'))
+                        fig2.add_trace(go.Bar(x=monthly_df.index, y=-monthly_df["Loan_Payment_$"], name='Loan Payment (Cost)')) # Show as negative
+                        fig2.add_trace(go.Scatter(x=monthly_df.index, y=monthly_df["Net_Cash_Flow_$"], mode='lines+markers', name='Net Cash Flow', line=dict(color='green')))
+                        fig2.update_layout(barmode='relative', title_text="Monthly Savings, Loan Payment, and Net Cash Flow", yaxis_title="Amount ($)")
+                        
+                        # NEW: Save the underlying data in session state for the PDF report generator
+                        st.session_state.monthly_cash_flow_data = monthly_df
+                        
+                        st.plotly_chart(fig2, use_container_width=True)
+                        st.caption("This chart shows your estimated monthly utility savings versus a simplified loan payment, and the resulting net cash flow.")
+                        
+            
                     with st.expander("View Detailed Monthly Data"):
                         st.dataframe(monthly_df.style.format("${:,.2f}"))
-            else:
-                st.warning("Could not generate monthly cash flow data.")
-            
+                else:
+                    st.warning("Could not generate monthly cash flow data.")
+                    
     # --- PPA Analyzer Button (Only for Residential users) ---
     user_type = form_data.get("unified_business_type")
     if user_type == "Homeowner":
         st.subheader("Financing Options Comparison")
         if st.button("⚖️ Compare PPA vs. Ownership", use_container_width=True, type="secondary", key="s2_to_ppa_analyzer"):
             # This signals `sharkbite_app.py` to navigate to the new page
+            st.session_state.ppa_screen_visited = True
             return "ppa_analyzer"
 
     # Navigation

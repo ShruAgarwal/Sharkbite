@@ -32,7 +32,11 @@ def call_claude_on_bedrock(prompt_text: str,
         "messages": [{"role": "user", "content": prompt_text}]
     })
     
-    log_data = f"model_id={model_id}, prompt_len={len(prompt_text)}"
+    log_data = {
+        'event': 'bedrock_api_call',
+        'model_id': model_id,
+        'prompt_length': len(prompt_text)
+    }
     ai_logger.info("Sending prompt to Bedrock.", extra={'extra_data': log_data})
     
     try:
@@ -57,7 +61,9 @@ def call_claude_on_bedrock(prompt_text: str,
 # --- 1.1 "AI Recommendations" Feature ---
 @st.cache_data(ttl=600, show_spinner="Generating personalized recommendations...")  # Cache for 10 minutes
 def get_ai_recommendations(context: str, user_inputs: dict) -> list[str]:
-    """Generates contextual AI recommendations."""
+    """
+    Generates contextual AI recommendations.
+    """
 
     prompt = f"""
     You are a helpful and professional clean energy project advisor. Your task is to provide clear, actionable recommendations based ONLY on the provided user inputs and their current stage in the application process.
@@ -86,7 +92,7 @@ def get_ai_recommendations(context: str, user_inputs: dict) -> list[str]:
     * Consider applying for the California SWEEP program, as it offers reimbursement for irrigation upgrades which is highly relevant for agricultural projects in CA.
     * To strengthen your financial case for lenders, model a 'Whole House Backup' battery option to quantify the project's resilience benefits.
     """
-    response_data = call_claude_on_bedrock(prompt, model_id="anthropic.claude-3-5-sonnet-20240620-v1:0")
+    response_data = call_claude_on_bedrock(prompt, model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0")
     
     if "error" in response_data:
         st.error(response_data["error"])
@@ -145,20 +151,31 @@ def get_core_equipment_recommendation(project_summary: dict) -> dict:
     - "explanation": A brief, one-sentence justification for your choice based on the user's data.
     """
 
-    response_data = call_claude_on_bedrock(prompt, model_id="anthropic.claude-3-5-sonnet-20240620-v1:0")
+    response_data = call_claude_on_bedrock(prompt, model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0")
 
     if "error" in response_data:
         st.error(response_data["error"])
         return {"error": response_data["error"]}
 
     claude_response_str = response_data["text"]
+
+    # This looks for content between ```json and ``` block, ignoring leading/trailing whitespace
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", claude_response_str, re.DOTALL)
+    
+    json_string_to_parse = None
+    if json_match:
+        json_string_to_parse = json_match.group(1)
+    else:
+        # If no Markdown fence is found, assume the whole response is the JSON
+        # This makes the function backwards-compatible if the model changes its output style
+        json_string_to_parse = claude_response_str.strip()
     try:
-        parsed_json = json.loads(claude_response_str)
+        parsed_json = json.loads(json_string_to_parse)
         
         # Guardrail: Check for required keys
         required_keys = {"recommended_equipment_type", "base_voucher_amount", "enhancement_percent", "total_voucher_amount", "explanation"}
         if not required_keys.issubset(parsed_json.keys()):
-            raise json.JSONDecodeError("Missing required keys in AI response.", claude_response_str, 0)
+            raise json.JSONDecodeError("Missing required keys in AI response.", json_string_to_parse, 0)
         return parsed_json
     except json.JSONDecodeError:
         ai_logger.warning("Failed to parse Claude's JSON response for CORE recommendation.", extra={'extra_data': {'raw_response': claude_response_str}})
@@ -168,7 +185,9 @@ def get_core_equipment_recommendation(project_summary: dict) -> dict:
 # --- 1.3 "AI Analyst" Feature ---
 @st.cache_data(ttl=600, show_spinner="🧠 Analyzing financials with AI...")  # Cache for 10 minutes
 def analyze_financial_data_with_claude(project_data: dict) -> dict:
-    """Sends financial data to Claude for analysis and returns a parsed JSON object."""
+    """
+    Sends financial data to Claude for analysis and returns a parsed JSON object.
+    """
 
     if not project_data or not isinstance(project_data, dict):
         return {"error": "Project data for analysis is missing or invalid."}
@@ -194,9 +213,9 @@ def analyze_financial_data_with_claude(project_data: dict) -> dict:
     Do not provide direct financial or legal advice. Frame your analysis as an expert summary of the modeled data.
     """
 
-    # Accessing a "Cross-Region Inference" Claude model
+    # Accessing a "Global Cross-Region Inference" Claude model
     response_data = call_claude_on_bedrock(prompt,
-                                           model_id="us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+                                           model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
                                            max_tokens=2000,
                                            temperature=0.3)
 
@@ -230,7 +249,7 @@ def analyze_financial_data_with_claude(project_data: dict) -> dict:
 
 
 # --- 1.4 AI Analyst for "PPA & Future Load" (Optional Screen for Residential Users) ---
-@st.cache_data(ttl=600, show_spinner="🧠 AI is analyzing the PPA vs. Ownership trade-offs...")
+@st.cache_data(ttl=600, show_spinner="🧠 Analyzing the PPA vs. Ownership trade-offs...")
 def get_ai_ppa_analysis(ppa_vs_ownership_data: dict, future_load_data: dict) -> dict:
     """
     Generates a sophisticated, comparative analysis of PPA vs. Ownership,
@@ -263,25 +282,41 @@ def get_ai_ppa_analysis(ppa_vs_ownership_data: dict, future_load_data: dict) -> 
     """
     
     # Using Sonnet is a good, cost-effective choice for this structured summary task.
-    response_data = call_claude_on_bedrock(prompt, model_id="anthropic.claude-3-5-sonnet-20240620-v1:0", max_tokens=900)
+    response_data = call_claude_on_bedrock(prompt,
+                                           model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                                           max_tokens=900)
     
     if "error" in response_data:
         return {"error": response_data["error"], "raw_response": ""}
 
     claude_response_str = response_data.get("text", "")
+
+    json_match = re.search(r"```json\s*(\{.*?\})\s*```", claude_response_str, re.DOTALL)
+    
+    json_string_to_parse = None
+    if json_match:
+        json_string_to_parse = json_match.group(1)
+    else:
+        json_string_to_parse = claude_response_str.strip()
     
     try:
-        parsed_json = json.loads(claude_response_str)
+        parsed_json = json.loads(json_string_to_parse)
+        
         # Final guardrail: check for our new, specific required keys
         required_keys = {"primary_trade_off", "itc_impact", "future_load_impact"}
         if not required_keys.issubset(parsed_json.keys()):
-            raise json.JSONDecodeError("Missing required keys in AI response.", claude_response_str, 0)
+            raise json.JSONDecodeError("Missing required keys in AI response.", json_string_to_parse, 0)
         return parsed_json
     except json.JSONDecodeError:
         ai_logger.warning("Failed to parse Claude's JSON for PPA analysis.", extra={'extra_data': {'raw_response': claude_response_str}})
         return {"error": "AI response was not in the expected format.", "raw_response": claude_response_str}
 
-# --- Future OCR AI Integration Placeholder ---
-# def analyze_document_for_eligibility(document_text: str, grant_rules: str) -> dict:
-#     """(Future Placeholder) Sends document text to Claude for analysis."""
-#     return {"status": "placeholder", "findings": "Document analysis feature is not yet implemented."}
+# --------- Future OCR AI Integration Placeholder ---------
+# def analyze_document_for_eligibility(document_text: str,
+#                                       grant_rules: str) -> dict:
+#       """
+#       Sends document text to Claude for analysis.
+#       """
+#       return {
+#           "status": "placeholder",
+#           "findings": "Document analysis feature is not yet implemented."}

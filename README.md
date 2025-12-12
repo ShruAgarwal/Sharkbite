@@ -1,8 +1,18 @@
-# 🦈 Sharkbite MVP - Clean Energy Incentive Calculator
+# 🦈 Sharkbite - Clean Energy Incentive Calculator
  *Take a bite out of high electric bills!*
 
 <!---
-# Sharkbite MVP - Clean Energy Incentive Calculator
+This application is a sophisticated financial modeling tool built with Streamlit. It guides users through a multi-step workflow to size a solar and battery system, identify eligibility for complex incentives like the USDA REAP grant, and generate a final, compliant financial summary, complete with AI-powered analysis and a downloadable PDF report.
+
+## ✨ Core Features
+
+*   **Multi-Screen Workflow:** A guided, 7-step user journey from initial data intake to final report export.
+*   **Solar & Battery Calculator:** Performs detailed hourly energy dispatch simulations based on NREL PVWatts data to accurately model savings.
+*   **REAP Grant Scoring:** A live, detailed scoring engine for the USDA REAP grant based on official criteria.
+*   **Incentive Stacker:** Models the complex interactions and compliance rules (e.g., Federal Share Cap) for stacking multiple grants and tax incentives.
+*   **AI-Powered Analysis:** Leverages AWS Bedrock (Claude 3.5 Sonnet) to provide contextual recommendations, financial risk analysis, and equipment suggestions.
+*   **PPA vs. Ownership Analyzer:** An optional module for homeowners to compare the long-term financial outcomes of leasing versus owning a solar system.
+*   **PDF Report Generation:** Creates a custom, investor-ready PDF summary of the entire project analysis.
 
 This project is a Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users assess eligibility and estimate benefits for clean energy project incentives, with an initial focus on the USDA REAP grant.
 --->
@@ -77,12 +87,19 @@ Sharkbite/
 │   ├── solar_calculator_logic.py    # Calculation functions for sizing, dispatch, and simplified financials
 │   └── incentive_definitions.py     # Structured definitions for all grant and incentive programs
 │   └── claude_service.py            # Manages all interactions with the Claude LLM Model on AWS Bedrock
+│   ├── pdf_generator.py             # Logic for creating the final PDF report
 │   └── ui_login_screen.py           # Streamlit main login screen function
 │   └── ui_unified_intake_screen.py  # Streamlit screen 1 rendering functions
 │   └── ui_calculator_screen.py      # Streamlit screen 2 rendering functions
 │   └── ui_ppa_analyzer_screen.py    # Renders the optional PPA vs. Ownership analysis screen for homeowners
 │   └── ui_reap_flow_screens.py      # Streamlit screens 3-7 rendering functions
 │   └── utils.py                     # Contains shared constants, helper functions, and the final calculator
+├── tests/                           # Automated tests for the application
+│   ├── test_e2e_ppa_flow.py                 # E2E test for conditional PPA button rendering
+│   ├── test_integration_claude_service.py   # Integration tests for AI service functions
+│   ├── test_login.py                        # Test for the login functionality
+│   ├── test_unit_calculator_logic.py        # Unit tests for core financial & dispatch logic
+│   └── test_unit_utils.py                   # Unit tests for helper functions (REAP, etc.)
 ├── sharkbite_mvp v1.0/              # Older App Version
 ├── sharkbite_app.py                 # Streamlit App
 ├── requirements.txt                 # Project dependencies

@@ -15,13 +15,28 @@ NREL_API_KEY_HOLDER = {"key": None}
 
 @st.cache_data(ttl=3600)
 def geocode_address_nominatim(address):
-    """Returns (lat, lon, error_message_or_none)."""
+    """
+    Returns (lat, lon, error_message_or_none).
+    Handles ambiguity between 5-digit house numbers and ZIP codes.
+    """
 
     if not address:
         return "Address not provided."
+    
+    base_url = f"https://nominatim.openstreetmap.org/search?format=json"
+    headers = {'User-Agent': 'SharkbiteStreamlitApp/2.3'}
+    
+    # Check if the input is ONLY a 5-digit number (a ZIP code).
+    address_clean = address.strip()
+    if address_clean.isdigit() and len(address_clean) == 5:
+        # If it's just a ZIP, use the specific 'postalcode' parameter to avoid ambiguity.
+        geo_url = f"{base_url}&postalcode={address_clean}&country=US"
+    else:
+        # For any other format (full address), use the general query parameter 'q'.
+        # This lets Nominatim's powerful parser handle the full string correctly.
+        geo_url = f"{base_url}&q={address}"
+
     try:
-        geo_url = f"https://nominatim.openstreetmap.org/search?format=json&q={address}"
-        headers = {'User-Agent': 'SharkbiteStreamlitApp/2.2'}
         response = requests.get(geo_url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -82,7 +97,9 @@ def fetch_pvwatts_hourly_production(lat, lon, system_capacity_kw,
 
 # --- Battery Sizing Logic ---
 def get_battery_specs(backup_pref: str):
-    """Returns battery kWh and cost based on user preference."""
+    """
+    Returns battery kWh and cost based on user preference.
+    """
     # This logic is simpler and more aligned now
     if backup_pref == "Essentials Only (10 kWh)":
         return 10.0 # 10 kWh, $12k
@@ -224,7 +241,10 @@ def run_hourly_dispatch_simulation(
 
 
 def calculate_future_electrification_load(ev_miles=0, ev_efficiency=4.0, heat_pump_btu=0, heat_pump_cop=3.0):
-    """Calculates the additional annual kWh load from future electrification."""
+    """
+    Calculates the additional annual kWh load from future electrification.
+    """
+
     additional_kwh = 0.0
     try:
         if ev_miles > 0 and ev_efficiency > 0:
@@ -328,12 +348,13 @@ def perform_solar_battery_calculations(inputs):
     Inputs: address, monthly_kwh_usage, cost_per_kwh, system_size_kw, backup_pref, user_type
     """
     results = {
-        "lat": None, "lon": None, "geo_error": None,
-        "ac_annual": None, "ac_monthly": None, "pv_error": None,
-        "battery_kwh": 0, "battery_units": 0, "battery_cost": 0, "backup_duration_days": 0,
-        "future_load_kwh": 0.0,
-        "financials": {}, # To store results from calculate_initial_financials_for_calculator
-        "dispatch_results": {}
+        "lat": None, "lon": None,
+        "geo_error": None, "ac_annual": None,
+        "ac_monthly": None, "pv_error": None,
+        "battery_kwh": 0, "battery_units": 0,
+        "battery_cost": 0, "backup_duration_days": 0,
+        "future_load_kwh": 0.0, "dispatch_results": {},
+        "financials": {} # To store results from calculate_initial_financials_for_calculator
     }
 
     # 1. Geocode

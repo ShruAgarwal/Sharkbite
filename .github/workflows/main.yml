@@ -1,0 +1,53 @@
+name: Build and Test Sharkbite Application
+
+# This workflow will trigger on two events:
+# 1. When code is pushed to the 'main' branch.
+# 2. When a pull request is created or updated that targets the 'main' branch.
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    # The type of virtual machine to run the job on. 'ubuntu-latest' is the standard and most cost-effective choice.
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out your repository code
+      # This action downloads source code onto the runner.
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      # Step 2: Set up the Python environment
+      # Using a specific version ensures consistency.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install project dependencies
+      # It's good practice to upgrade pip first, then install from requirements.txt.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      # Step 4: Lint with flake8
+      # A fast check for Python syntax errors and style issues before running tests.
+      # This command checks the main app file and the entire sharkbite_engine directory.
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      # Step 5: Run the full test suite with pytest
+      # Pytest will automatically discover and run all files named test_*.py in the 'tests' directory.
+      # The tests will run headlessly without needing a browser!
+      - name: Run Pytest suite
+        run: |
+          pytest

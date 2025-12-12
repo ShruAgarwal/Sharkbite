@@ -1,11 +1,17 @@
 from sharkbite_engine.incentive_definitions import INCENTIVE_PROGRAMS
 from datetime import date
+import inspect  # To inspect function arguments
+import re
 import numpy as np
 import pandas as pd
-import inspect  # To inspect function arguments
 import streamlit as st
 
 # --- Important Constants ---
+AVG_SUN_HOURS_FOR_AUTOSIZE = 5
+DERATE_FACTOR_FOR_AUTOSIZE = 0.75
+BATTERY_UNIT_KWH = 13.5
+BATTERY_UNIT_COST = 12000
+
 # Specific yield: kWh produced annually per kW of system size which varies by location (for auto-sizing from bill)
 SPECIFIC_YIELD_RULE_OF_THUMB = 1300 # a reasonable US average for a simple rule-of-thumb.
 INVERTER_EFF = 0.96
@@ -22,14 +28,10 @@ WHOLESALE_EXPORT_RATE = 0.03  # Placeholder for self-consumption model
 NET_METER_CREDIT_FACTOR = 0.75 # 75% of retail rate for exports
 MACRS_TAX_RATE = 0.21 # Corporate tax rate for commercial projects
 
-# AVG_SUN_HOURS_FOR_AUTOSIZE = 5
-# DERATE_FACTOR_FOR_AUTOSIZE = 0.75
 # SOLAR_SYSTEM_COST_PER_KW = 2500
-# BATTERY_UNIT_KWH = 13.5
-# BATTERY_UNIT_COST = 12000
 # CALCULATOR_SIMPLIFIED_MACRS_RATE = 0.26 # Flat MACRS @26% of (System + Battery Cost) for commercial
 
-# --- NEW: Detailed TOU Schedule Configuration ---
+# --- Detailed TOU Schedule Configuration ---
 # This structure is based on the PG&E tariff documents that defines seasons, day types, & peak hours for different rate plans.
 HOLIDAYS_2025 = [ # For rate calculations
     date(2025, 1, 1), date(2025, 1, 20), date(2025, 2, 17), date(2025, 5, 26),
@@ -69,19 +71,6 @@ TOU_SCHEDULE_CONFIG = {
     }
 }
 
-# AI Helper Texts (Comprehensive - aligning with PDF scoring insights)
-AI_HELPER_TEXTS_REAP = {
-    "q1_biz_structure": "REAP prioritizes: First-time applicants, Small Businesses (SBA definition), entities in Rural areas, Tribal entities, and Agricultural Producers. Max 15 pts for this category (combined with prior history).",
-    "q7_reap_funding_history": "Being a first-time REAP applicant gives a significant point advantage. Recent awardees (last 2 years) score lower. Max 15 pts (combined with business type).",
-    "business_name": "Enter the legal name of your business as registered.",
-    "q2_project_type_reap": "Energy Efficiency (EEI) or Combined (RES+EEI) projects often score higher in REAP due to comprehensive benefits & cost savings. Max 15 pts.",
-    "q3_primary_technology": "While Solar PV is common, REAP may give priority to 'underutilized' tech with high impact like Anaerobic Digesters or Geothermal. Max 10 pts.",
-    "system_size_kw": "System capacity in kW. Affects grant caps ($1M for RES, $500k for EEI) & technical report needs (>$200k project cost).",
-    "q5_zip_code_reap": "Crucial for REAP! Used for USDA rural status, Energy Community & Justice40 bonus. Check official USDA map. Max 10 pts.",
-    "q4_ghg_emissions": "Projects achieving net-zero GHG emissions typically receive maximum points for Environmental Benefit. Max 10 pts.",
-    "project_name_sharkbite": "A unique, descriptive name helps track your project.",
-    "capex_sharkbite": "Total Capital Expenditure. REAP grant is up to 50% of this, subject to project type caps ($1M RES, $500k EEI)."
-}
 
 MOCK_NON_REAP_INCENTIVES_PREVIEW = {
     "base_itc_rate_display": 0.30,
@@ -104,18 +93,6 @@ REAP_GRANT_CAPS_BY_TECH = {
     "Combined RES + EEI": 1000000
 }
 
-# AI Helper Texts (Keep and expand as needed)
-AI_HELPER_TEXTS_UNIFIED_INTAKE = {
-    "address_zip": "Full property address (Street, City, State, ZIP) for accurate solar estimates and local incentive checks.",
-    "business_type_unified": "Select your primary entity type. This influences eligible incentives like MACRS for businesses.",
-    "monthly_kwh_usage": "Average monthly electricity consumption in kWh (from your utility bill). Used for system auto-sizing.",
-    "electricity_rate": "Your average cost per kWh ($/kWh) from your utility bill. Impacts savings calculations."
-}
-AI_HELPER_TEXTS_CALCULATOR = {
-    "system_size_kw": "Confirm or adjust the auto-recommended solar system size in kilowatts (kW).",
-    "backup_pref": "'Essentials' covers critical loads. 'Whole House' aims to power most of your home during an outage."
-}
-
 # Mock Eligibility Check for Unified Intake
 ELIGIBILITY_CHECKS_UNIFIED_INTAKE = {
     "55714": {"text": "This ZIP (mock) qualifies as RURAL and is in an ENERGY COMMUNITY! Potential 10% ITC bonus and strong REAP eligibility.", "type": "success"},
@@ -125,36 +102,273 @@ ELIGIBILITY_CHECKS_UNIFIED_INTAKE = {
 
 # --- NEW: Static Tooltips / Helper Texts ---
 # This dictionary will hold all static helper texts. It is more reliable and cost-effective than calling an LLM.
-STATIC_TOOLTIPS = {
-    # General Terms
-    "ITC": "The Investment Tax Credit (ITC) is a dollar-for-dollar reduction in federal income taxes for a percentage of the cost of a renewable energy system.",
-    "MACRS": "The Modified Accelerated Cost Recovery System (MACRS) is a tax depreciation system that allows businesses to recover the cost of property over a specified time, providing a significant tax benefit.",
-    "REAP_GRANT": "The USDA Rural Energy for America Program (REAP) provides grants for renewable energy systems and energy efficiency improvements for rural small businesses and agricultural producers.",
+TOOLTIPS = {
+    # --- Screen 1: Unified Intake ---
+    "address_zip": "Your full property address (Street, City, State, ZIP) is used for accurate geocoding, solar production estimates, and local incentive checks.",
+    "unified_business_type": "Choose your primary entity type—like 'Homeowner' for residential analysis or a business type to unlock commercial tax incentives like MACRS depreciation. Let’s maximize your benefits!",
+    "unified_monthly_kwh": "Your average monthly electricity usage (in kWh) from your utility bill. This is the primary input for auto-sizing your solar system.",
+    "unified_electricity_rate": "Your average cost per kWh ($/kWh) from your utility bill is essential for calculating potential savings. Knowing this figure empowers your energy choices!",
+    "self_consumption_priority": "Prioritizes using your own solar/battery power before exporting. Recommended for areas with low grid export rates.",
 
-    # California CORE Specific Tooltips (from your document)
-    "CA_CORE_PROGRAM": "The CORE program provides upfront, point-of-sale vouchers to help cover the cost of zero-emission off-road equipment in California.",
-    "CA_CORE_ENHANCEMENT": "Small businesses and projects in low-income or disadvantaged communities may receive up to 25% extra in voucher value.",
-    "CA_CORE_NO_SCRAP": "You do not need to scrap old diesel equipment to qualify for the CORE voucher."
+    # --- Screen 2: Solar & Battery Calculator ---
+    "system_size_kw": "Confirm or adjust the auto-recommended solar system size in kilowatts (kW). A larger system produces more energy but costs more.",
+    "inverter_size_kw": "The inverter converts DC solar power to AC household power. Sizing it smaller than the solar array (e.g., DC/AC ratio of 1.25) can be cost-effective but may lead to 'clipping' (lost energy) on very sunny days.",
+    "calculator_backup_pref": "Essentials provides backup for critical loads (e.g., fridge, lights), whereas the 'Whole House' option aims to power most of your home during an outage.",
+    "min_battery_reserve_pct": "Sets a minimum charge level that the battery will not discharge below during normal operation, preserving it for a power outage.",
+    "override_battery_cost": "Override the default battery cost assumption if you have a specific quote. This is an advanced setting.",
+    "tou_enabled": "Enable a more sophisticated savings calculation based on peak and off-peak electricity rates, which is crucial for battery optimization.",
+    "rate_plan": "The selected plan determines the peak/off-peak rates and times used in the financial model, based on real utility tariff structures.",
+    "self_consumption_rate": "Percentage of solar energy you produce that is used directly on-site (powering your home or charging your battery), instead of being exported to the grid.",
+    "grid_independence_rate": "Percentage of your total electricity needs that are met by your own solar and battery system, indicating your reliance on the grid.",
+    "net_grid_interaction": "Total kWh imported from the grid minus total kWh exported. A lower number means less reliance on the grid.",
+    
+    # --- PPA Analyzer Screen ---
+    "ownership_net_cost_y1": "Your estimated cost to own the system after all grants and tax credits.",
+    "ppa_rate_y1": "The fixed price per kilowatt-hour (kWh) you agree to pay the PPA provider in the first year of the contract.",
+    "ppa_escalator": "The annual percentage increase in your PPA rate. A 2.9% escalator means your price per kWh will go up by 2.9% each year.",
+    "utility_escalator": "Your best estimate for how much your standard utility electricity rates will increase each year. This is used as the baseline for calculating your savings.",
+    "owner_om_cost_per_kw_yr": "Estimated annual cost for maintenance, cleaning, and monitoring for a system you own. Typically $15-30 per kW per year.",
+    "owner_inverter_replacement_cost": "The estimated cost to replace the solar inverter, which typically has a shorter lifespan (10-15 years) than the solar panels.",
+    
+    # --- Screen 4 (REAP Deep Dive) & 5 (Multi-Grant Stacker) ---
+    # "business_name": "Enter the legal name of your business as registered.",
+    # "project_name_sharkbite": "A unique, descriptive name helps track your project.",
+    "capex_sharkbite": "Total Capital Expenditure. REAP grant is up to 50% of this, subject to project type caps ($1M RES, $500k EEI).",
+    "system_size_kw": "System capacity in kW. Affects grant caps ($1M for RES, $500k for EEI) & technical report needs (>$200k project cost).",
+    "q1_biz_structure": "REAP prioritizes: First-time applicants, Small Businesses (SBA definition), entities in Rural areas, Tribal entities, and Agricultural Producers. Max 15 pts for this category (combined with prior history).",
+    "q2_project_type_reap": "Confirm the category your project falls under for REAP. Energy Efficiency (EEI) or Combined (RES+EEI) projects often score higher in REAP due to comprehensive benefits & cost savings. Max 15 pts.",
+    "q3_primary_technology": "The technology type can affect REAP grant caps and scoring. While Solar PV is common, REAP may give priority to 'underutilized' tech with high impact like Anaerobic Digesters or Geothermal. Max 10 pts.",
+    "q4_ghg_emissions": "Projects that result in zero greenhouse gas emissions (like solar and wind) receive a significant scoring bonus for their environmental benefit.",
+    "q5_zip_code_reap": "Crucial for REAP! Used for USDA rural status, Energy Community & Justice40 bonus. Check the official USDA map. Max 10 pts.",
+    "q7_reap_funding_history": "First-time applicants are often prioritized with 15 bonus points in the REAP scoring evaluation, increasing their approval chances. Recent awardees or repeat applicants score lower unless projects differ significantly.",
+    "mock_doc_score_reap": "This simulates the points awarded for having necessary documents like energy audits, permits, and deeds ready for your application. Higher readiness leads to a better score.",
+    "placed_in_service_year": "The year your project becomes operational. This determines the Bonus Depreciation rate (e.g., 60% for 2024, 40% for 2025).",
+    
+    # --- Screen 6: Final Dashboard Metrics (with calculations) ---
+    "correct_depreciable_basis": "Your basis for depreciation after a 50% ITC reduction",
+    "total_itc_value": "30% of Total Project Cost plus any eligible bonuses (e.g., Energy Community).",
+    "year_1_depreciation_tax_benefit": "The tax savings from depreciation in Year 1. Calculated on the 'Correct Depreciable Basis' using Bonus + MACRS rules.",
+    "final_net_cost": "The estimated out-of-pocket cost in Year 1. Calculation: Total Project Cost - (REAP Grant + ITC + Depreciation Tax Benefit + Other Grants).",
+    "annual_savings": "Based on your TOU rates and self-consumption.",
 }
 
 
 # --- Progress Badge Utility ---
-def generate_progress_bar_markdown(screen_flow_map, current_screen_key, total_steps_override=None):
-    """Generates markdown for a progress bar with the current step highlighted."""
-    total_steps_val = total_steps_override if total_steps_override else len(screen_flow_map)
+def generate_progress_bar_markdown(screen_flow_map,
+                                   current_screen_key,
+                                   final_step_completed=False,
+                                   total_steps_override=None):
+    """
+    Generates markdown for a progress bar with completed, current, and future steps highlighted.
+    """
     
+    ppa_visited = st.session_state.get("ppa_screen_visited", False)
+
+    total_steps_val = total_steps_override if total_steps_override else len(screen_flow_map)
+
+    # If on the optional PPA screen, treat the calculator as the current step for the progress bar
+    effective_screen_key = 'solar_battery_calculator' if current_screen_key == 'ppa_analyzer' else current_screen_key
+    
+    current_step_num = screen_flow_map.get(effective_screen_key, (0, ''))[0]
+
+    # If the final step is marked as complete, advance the step number beyond the map
+    if final_step_completed:
+        current_step_num = total_steps_val + 1
+
     progress_display_list = []
-    for screen_name_loop_key, (step_num, step_name_val) in screen_flow_map.items():
-        display_name = step_name_val.replace(" ", " ") # Ensure spaces are kept
-        if screen_name_loop_key == current_screen_key:
-            progress_display_list.append(f":violet-badge[:material/screen_record: STEP [{step_num}/{total_steps_val}]: {display_name}]")
+    screen_keys_in_order = list(screen_flow_map.keys())
+
+    for screen_name_loop_key in screen_keys_in_order:
+        step_num, step_name_val = screen_flow_map[screen_name_loop_key]
+        display_name = step_name_val.replace(" ", " ")
+
+        if step_num < current_step_num:
+            # Completed step: Green badge
+            progress_display_list.append(f":green-badge[:material/task_alt: {step_num}: {display_name}]")
+        elif screen_name_loop_key == effective_screen_key:
+            # Current/active step: Violet badge
+            progress_display_list.append(f":violet-badge[:material/screen_record: {step_num}: {display_name}]")
         else:
-            progress_display_list.append(f"STEP [{step_num}/{total_steps_val}]: {display_name}")
-    return " > ".join(progress_display_list)
+            # Not yet visited step: Grey badge
+            progress_display_list.append(f":grey-badge[:material/radio_button_partial: {step_num}: {display_name}]")
+    
+    # After building the main list, insert the optional PPA screen name if it has been visited
+    if ppa_visited:
+        try:
+            # Finds the original index of the calculator screen
+            calculator_index_in_keys = screen_keys_in_order.index('solar_battery_calculator')
+            # Insert the colorless PPA label right after it in the display list
+            progress_display_list.insert(calculator_index_in_keys + 1, ":blue-badge[PPA Analyzer]")
+        except ValueError:
+            # Failsafe in case 'solar_battery_calculator' isn't in the map keys
+            pass
+
+    return " **--** ".join(progress_display_list)
+
+
+# --- NEW: Auto-Sizing Function ---
+def calculate_autosized_system_kw(monthly_kwh_usage):
+    """
+    Auto-sizes a solar system based on monthly usage as per Francie's formula.
+    Formula: Monthly Usage ÷ (Sun Hours * 30 * Derate Factor)
+    """
+    if not monthly_kwh_usage or monthly_kwh_usage <= 0:
+        return 0.0
+    try:
+        # Perform calculation
+        size = float(monthly_kwh_usage) / (AVG_SUN_HOURS_FOR_AUTOSIZE * 30 * DERATE_FACTOR_FOR_AUTOSIZE)
+        # Round to one decimal place for a clean recommendation
+        return round(size, 1)
+    except (ValueError, TypeError):
+        return 0.0
+    
+
+# --- TOU Rate Schedule Generator ---
+def generate_hourly_rate_schedule(rate_plan: str):
+    """
+    Generates a NumPy array of 8760 hourly electricity rates based on a selected TOU plan.
+    """
+    if rate_plan not in TOU_SCHEDULE_CONFIG:
+        # Fallback to a flat rate: if rate_plan is not found
+        return np.full(8760, 0.18) 
+
+    plan = TOU_SCHEDULE_CONFIG[rate_plan]
+    timestamps = pd.to_datetime(pd.date_range("2025-01-01", periods=8760, freq="h"))
+    
+    hourly_rates = np.zeros(8760)
+
+    for i, ts in enumerate(timestamps):
+        # Determine Season
+        season = "winter"
+        if 5 <= ts.month <= 10:   # May-to-Oct is Summer
+            season = "summer"
+        
+        # Use correct season or fall back safely
+        if season in plan["seasons"]:
+            season_rates = plan["seasons"][season]
+        elif "all_year" in plan["seasons"]:
+            season_rates = plan["seasons"]["all_year"]
+        else:
+            raise ValueError(f"Rate plan '{rate_plan}' is missing season '{season}' and has no 'all_year' fallback.")
+    
+       # Use "all_year" if specific season not defined
+        peak_rate = season_rates["peak_rate"]
+        offpeak_rate = season_rates["offpeak_rate"]
+        
+        # Determine Day Type
+        is_weekday = ts.dayofweek < 5   # Monday=0, Sunday=6
+        is_holiday = ts.date() in HOLIDAYS_2025
+        
+        # Default to off-peak
+        rate = offpeak_rate
+        
+        # Check if it's a peak period
+        peak_period = plan["periods"]["peak"]
+        if ts.hour in peak_period["hours"]:
+            if ("weekday" in peak_period["days"] and is_weekday and not is_holiday) or \
+               ("everyday" in peak_period["days"]):
+                rate = peak_rate
+        
+        hourly_rates[i] = rate
+        
+    return hourly_rates
+
+
+# --- NEW: Simulated Realistic RUCA Code Dictionary for NON-REAP Projects Only ---
+# This mimics a real ZIP-to-RUCA database lookup (for now) that acts as an override/specific example list.
+# RUCA codes 1-3 are "Metropolitan", 4-6 are "Micropolitan", 7-9 are "Small Town", 10 is "Rural".
+# USDA generally considers RUCA >= 4 as eligible for many rural programs.
+MOCK_RUCA_CODES = {
+    # Urban Overrides (to be sure they are classified correctly)
+    "90210": 1, "60613": 1, "10001": 1,
+    "33109": 1, # Miami Beach
+    "94102": 1, # San Francisco
+    
+    # Rural Overrides (for specific demo scenarios)
+    "59718": 4, "95453": 7, "30680": 8,
+    "59011": 10, "69201": 10, # Valentine, NE (very rural)
+    "81419": 10,
+}
+
+# --- NEW: Dedicated RUCA Code Lookup Function ---
+def get_ruca_code_from_zip(zip_code_str: str) -> tuple[int | None, str]:
+    """
+    Finds a 5-digit ZIP from a string and returns its estimated RUCA code.
+    1. Checks for an explicit override in MOCK_RUCA_CODES.
+    2. Falls back to a heuristic based on the first digit of the ZIP code.
+
+    It intelligently finds the last 5-digit number in the string to avoid
+    mistaking house numbers for ZIP codes.
+    
+    Returns (ruca_code, reason_string).
+    """
+    if not zip_code_str or not isinstance(zip_code_str, str):
+        return "No address string provided."
+    
+    zip_code = None
+    address_clean = zip_code_str.strip()
+    ruca_code = None
+    reason = ""
+
+    # First, check if the entire cleaned string is just a ZIP code.
+    if address_clean.isdigit() and len(address_clean) == 5:
+        zip_code = address_clean
+    else:
+        # If it's a longer address, find all 5-digit numbers and take the last one.
+        # The ZIP code in a US address is conventionally the final numerical component.
+        all_five_digit_numbers = re.findall(r'\b\d{5}\b', address_clean)
+        if all_five_digit_numbers:
+            zip_code = all_five_digit_numbers[-1]
+
+    if not zip_code:
+        return None, "No valid 5-digit ZIP code could be extracted from the address."
+
+    # Step 1: Check for a specific mock override first
+    if zip_code in MOCK_RUCA_CODES:
+        ruca_code = MOCK_RUCA_CODES[zip_code]
+        reason = f" (using specific demo value for ZIP {zip_code})"
+        return ruca_code, reason
+    
+    # Step 2: Heuristic Fallback based on the first digit
+    first_digit = zip_code[0]
+    if first_digit in ['3', '4', '5', '6', '7', '8']:
+        ruca_code = 7  # Assume Small Town/Rural
+        reason = f" (heuristic guess for rural region based on ZIP {zip_code})"
+        return ruca_code, reason
+    elif first_digit in ['0', '1', '2', '9']: # Generally more urbanized regions
+        ruca_code = 1  # Assume Metro
+        reason = f" (heuristic guess for urban region based on ZIP {zip_code})"
+        return ruca_code, reason
+    else:
+        return False, f"Invalid ZIP code format: '{zip_code}'."
+
+
+# --- NEW: REAP Eligibility Check with RUCA code ---
+def is_reap_eligible(form_data: dict) -> tuple[bool, str]:
+    """
+    Checks REAP eligibility by combining business type and location (via RUCA code).
+    """
+    user_type = form_data.get("unified_business_type")
+    
+    # Rule 1: Check Business Type (remains the same)
+    eligible_biz_types = ["Farm / Agriculture", "Rural Cooperative", "Commercial / Business"]
+    if user_type not in eligible_biz_types:
+        return False, f"Your business type ('{user_type}') is not eligible for REAP."
+
+    # Rule 2: Check Location with Heuristic Fallback
+    address_string = form_data.get("unified_address_zip", "") #.split(',')[-1].strip()[:5]
+    ruca_code, reason = get_ruca_code_from_zip(address_string)
+
+    # Step 3: Final check based on the determined RUCA code
+    if ruca_code is not None and ruca_code >= 4:
+        # Store eligibility status in session state for other functions to use
+        return True, f"Your location **RUCA Code: {ruca_code}{reason}** appears to be in a REAP-eligible rural area."
+    else:
+        return False, f"Your location **RUCA Code: {ruca_code}{reason}** is in a metropolitan area and is not eligible for REAP."
 
 
 # --- DETAILED REAP SCORING ENGINE (Replaces simplified formula) ---
-def calculate_detailed_reap_score(form_data):
+def calculate_detailed_reap_score(form_data, ruca_code: int):
     """
     Calculates REAP score based on the multi-category "Scoring Breakdown by Field" PDF.
     This uses REAL user inputs from the entire flow, not just defaults.
@@ -171,7 +385,6 @@ def calculate_detailed_reap_score(form_data):
     technology = form_data.get("reap_specific_technology", form_data.get("q3_primary_technology"))
     ghg_emissions = form_data.get("q4_ghg_emissions")
     zip_for_check = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5]
-    is_rural_mock = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("rural") > 0
     is_ec_mock = ELIGIBILITY_CHECKS_UNIFIED_INTAKE.get(zip_for_check, {}).get("text", "").lower().count("energy community") > 0
     doc_score = form_data.get('mock_doc_score_reap', 0) # Still mocked for now
     
@@ -232,12 +445,24 @@ def calculate_detailed_reap_score(form_data):
     # 5. Geographic Priority (Max 10 pts)
     max_possible_score += 10
     geo_pts = 0
-    if is_rural_mock and is_ec_mock:
-        geo_pts = 10
-    elif is_rural_mock or is_ec_mock:
-        geo_pts = 7
+
+    # RUCA-based scoring (as per USDA documentation)
+    # Codes 4-10 are generally considered rural/non-metro for REAP.
+    # We can add granularity: more points for more rural codes.
+    if ruca_code >= 10: # Rural
+        geo_pts = 8
+    elif ruca_code >= 7: # Small town / isolated rural
+        geo_pts = 6
+    elif ruca_code >= 4: # Micropolitan / town adjacent
+        geo_pts = 4
+    
+    # Add points for Energy Community status
+    if is_ec_mock:
+        geo_pts += 2 # Add a couple of points for EC, can be adjusted
+    
+    geo_pts = min(geo_pts, 10) # Cap at the maximum for this category
     score += geo_pts
-    breakdown.append(f"Geographic Priority (Rural/EC): {geo_pts}/10 pts")
+    breakdown.append(f"Geographic Priority (Rural/EC): {geo_pts}/10 pts (RUCA Code: {ruca_code})")
 
     # 6. Document Score (Max 20 pts, from slider)
     max_possible_score += 20
@@ -257,57 +482,6 @@ def calculate_detailed_reap_score(form_data):
     return score, breakdown, normalized_score
 
 
-# --- NEW: TOU Rate Schedule Generator ---
-def generate_hourly_rate_schedule(rate_plan: str):
-    """
-    Generates a NumPy array of 8760 hourly electricity rates based on a selected TOU plan.
-    """
-    if rate_plan not in TOU_SCHEDULE_CONFIG:
-        # Fallback to a flat rate: if rate_plan is not found
-        return np.full(8760, 0.18) 
-
-    plan = TOU_SCHEDULE_CONFIG[rate_plan]
-    timestamps = pd.to_datetime(pd.date_range("2025-01-01", periods=8760, freq="h"))
-    
-    hourly_rates = np.zeros(8760)
-
-    for i, ts in enumerate(timestamps):
-        # Determine Season
-        season = "winter"
-        if 5 <= ts.month <= 10:   # May-to-Oct is Summer
-            season = "summer"
-        
-        # Use correct season or fall back safely
-        if season in plan["seasons"]:
-            season_rates = plan["seasons"][season]
-        elif "all_year" in plan["seasons"]:
-            season_rates = plan["seasons"]["all_year"]
-        else:
-            raise ValueError(f"Rate plan '{rate_plan}' is missing season '{season}' and has no 'all_year' fallback.")
-    
-       # Use "all_year" if specific season not defined
-        peak_rate = season_rates["peak_rate"]
-        offpeak_rate = season_rates["offpeak_rate"]
-        
-        # Determine Day Type
-        is_weekday = ts.dayofweek < 5   # Monday=0, Sunday=6
-        is_holiday = ts.date() in HOLIDAYS_2025
-        
-        # Default to off-peak
-        rate = offpeak_rate
-        
-        # Check if it's a peak period
-        peak_period = plan["periods"]["peak"]
-        if ts.hour in peak_period["hours"]:
-            if ("weekday" in peak_period["days"] and is_weekday and not is_holiday) or \
-               ("everyday" in peak_period["days"]):
-                rate = peak_rate
-        
-        hourly_rates[i] = rate
-        
-    return hourly_rates
-
-
 # --- Incentive Eligibility Engine ---
 def check_incentive_eligibility(form_data):
     """
@@ -325,25 +499,35 @@ def check_incentive_eligibility(form_data):
     for incentive in INCENTIVE_PROGRAMS:
         is_eligible = True   # Assume eligible until a rule fails
         for rule in incentive["eligibility_rules"]:
-            field = rule["field"]
-            condition = rule["condition"]
-            required_value = rule["value"]
             
-            user_value = form_data.get(field)
-            
-            # Rule Evaluation Logic ---
-            if user_value is None:
-                is_eligible = False; break   # Can't evaluate if data is missing
+            # --- NEW: Check for a custom function rule ---
+            if "function" in rule:
+                if rule["function"] == "is_reap_eligible":
+                    # Call our dedicated REAP eligibility function
+                    reap_is_eligible, _ = is_reap_eligible(form_data) # We only need the boolean result here
+                    if reap_is_eligible != rule["expected_result"]:
+                        is_eligible = False; break
+                    
+            else: # Original field-based rule logic
+                field = rule["field"]
+                condition = rule["condition"]
+                required_value = rule["value"]
+                
+                user_value = form_data.get(field)
+                
+                # Rule Evaluation Logic ---
+                if user_value is None:
+                    is_eligible = False; break   # Can't evaluate if data is missing
 
-            if condition == "is_one_of":
-                if user_value not in required_value: is_eligible = False; break
-            elif condition == "is_true":
-                if not user_value: is_eligible = False; break
-            elif condition == "is_greater_than":
-                if not float(user_value) > required_value: is_eligible = False; break
-            elif condition == "is_equal_to":
-                if user_value != required_value: is_eligible = False; break
-            # Add more conditions as needed (is_less_than, contains, etc.)
+                if condition == "is_one_of":
+                    if user_value not in required_value: is_eligible = False; break
+                elif condition == "is_true":
+                    if not user_value: is_eligible = False; break
+                elif condition == "is_greater_than":
+                    if not float(user_value) > required_value: is_eligible = False; break
+                elif condition == "is_equal_to":
+                    if user_value != required_value: is_eligible = False; break
+                # Add more conditions as needed (is_less_than, contains, etc.)
 
         if is_eligible:
             eligible_incentives.append(incentive)
@@ -426,10 +610,14 @@ def perform_final_incentive_stack_calculations(form_data):
     results["total_project_cost"] = total_project_cost
 
     # Step 2 & 3: Calculate REAP Grant and Total ITC (without adjustments first)
-    # REAP
-    reap_project_type = form_data.get("q2_project_type_reap", "Renewable Energy System (RES)")
-    max_cap = REAP_GRANT_CAPS_BY_TECH.get(reap_project_type, 500000)
-    reap_grant_potential = min(0.5 * total_project_cost, max_cap)
+    # REAP Grant Amount (only for eligible projects)
+    reap_grant_potential = 0.0 # Default to 0
+    # Check the flag we set during the eligibility check.
+    if st.session_state.form_data.get('is_reap_eligible_flag', False):
+        # Only run the calculation if the user is eligible.
+        reap_project_type = form_data.get("q2_project_type_reap", "Renewable Energy System (RES)")
+        max_cap = REAP_GRANT_CAPS_BY_TECH.get(reap_project_type, 500000)
+        reap_grant_potential = min(0.5 * total_project_cost, max_cap)
     
     # ITC
     base_itc_value = total_project_cost * BASE_ITC_RATE

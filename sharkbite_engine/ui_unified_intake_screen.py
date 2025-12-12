@@ -1,7 +1,9 @@
 import streamlit as st
 from sharkbite_engine.utils import (
-    SPECIFIC_YIELD_RULE_OF_THUMB, AI_HELPER_TEXTS_UNIFIED_INTAKE,
-    ELIGIBILITY_CHECKS_UNIFIED_INTAKE, generate_progress_bar_markdown
+    SPECIFIC_YIELD_RULE_OF_THUMB,
+    TOOLTIPS,
+    ELIGIBILITY_CHECKS_UNIFIED_INTAKE,
+    generate_progress_bar_markdown
 )
 
 # ---- Screen Flow Map for User Journey (progress bar) ----
@@ -9,16 +11,16 @@ SCREEN_FLOW_MAP_NEW = {
     'unified_intake': (1, "Unified Intake"),
     'solar_battery_calculator': (2, "Solar & Battery Calculator"),
     'incentive_preview': (3, "Incentive Preview"),
-    'reap_deep_dive': (4, "REAP Deep Dive"), # Adapting old S4
+    'reap_deep_dive': (4, "REAP Deep Dive"),
     'multi_grant_stacker': (5, "Multi-Grant Stacker"),
     'final_incentive_dashboard': (6, "Financial Dashboard"), # Adapting old S7
-    'export_package': (7, "Export Package") # Adapting old S8
+    'export_package': (7, "Export Package")
 }
 
 
 def display_unified_intake_screen():
     st.title("Let's Start Sizing!")
-    st.markdown("Enter basic property and energy usage information to begin.")
+    st.markdown("**Enter basic property and energy usage information to begin.**")
     progress_bar_md = generate_progress_bar_markdown(SCREEN_FLOW_MAP_NEW, 'unified_intake')
     st.markdown(progress_bar_md, unsafe_allow_html=True)
     st.markdown("---")
@@ -30,7 +32,7 @@ def display_unified_intake_screen():
         "📍 Property Address or ZIP Code",
         value=form_data.get("unified_address_zip", ""),
         key="s1_unified_address_zip",
-        help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("address_zip")
+        help=TOOLTIPS.get("address_zip")
     )
     
     zip_val_for_hint = form_data.get("unified_address_zip", "").split(',')[-1].strip()[:5]
@@ -48,7 +50,7 @@ def display_unified_intake_screen():
         options=biz_type_options,
         index=biz_type_options.index(current_biz_type) if current_biz_type in biz_type_options else 0,
         key="s1_unified_biz_type",
-        help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("business_type_unified")
+        help=TOOLTIPS.get("unified_business_type")
     )
 
     st.subheader("⚡ Your Current Energy Profile")
@@ -56,20 +58,27 @@ def display_unified_intake_screen():
     with col1:
         form_data["unified_monthly_kwh"] = st.number_input(
             "Avg. Monthly Electricity Usage (kWh)",
-            min_value=0, value=form_data.get("unified_monthly_kwh", 1000), step=50,
-            key="s1_unified_monthly_kwh", help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("monthly_kwh_usage")
+            min_value=0,
+            value=form_data.get("unified_monthly_kwh", 1000),
+            step=50,
+            key="s1_unified_monthly_kwh",
+            help=TOOLTIPS.get("unified_monthly_kwh")
         )
         
     with col2:
         form_data["unified_electricity_rate"] = st.number_input(
             "Current Electricity Rate ($/kWh)",
-            min_value=0.0, value=form_data.get("unified_electricity_rate", 0.15), step=0.01, format="%.2f",
-            key="s1_unified_elec_rate", help=AI_HELPER_TEXTS_UNIFIED_INTAKE.get("electricity_rate")
+            min_value=0.0,
+            value=form_data.get("unified_electricity_rate", 0.15), step=0.01, format="%.2f",
+            key="s1_unified_elec_rate",
+            help=TOOLTIPS.get("unified_electricity_rate")
         )
     
     form_data["avg_monthly_bill"] = st.number_input(
-        "Avg. Monthly Electric Bill ($)", min_value=0,
-        value=form_data.get("avg_monthly_bill", 250), key="s1_avg_bill")  # <--- NEWLY ADDED
+        "Avg. Monthly Electric Bill ($)",
+        min_value=0,
+        value=form_data.get("avg_monthly_bill", 250),
+        key="s1_avg_bill")  # <--- NEWLY ADDED
 
     # --- ESTIMATES USAGE & SUGGEST SIZE ---
     avg_monthly_bill = form_data["avg_monthly_bill"]
@@ -100,9 +109,10 @@ def display_unified_intake_screen():
     
     form_data["self_consumption_priority"] = st.toggle(
         "Optimize for Self-Consumption (Minimize Grid Export)?",
-        value=form_data.get("self_consumption_priority", default_self_consumption),
+        value=form_data.get("self_consumption_priority",
+        default_self_consumption),
         key="s1_self_consumption_toggle",
-        help="Prioritizes using your own solar/battery power before exporting to the grid. Recommended for areas with low export rates."
+        help=TOOLTIPS.get("self_consumption_priority"),
     )
     if form_data["self_consumption_priority"]:
         st.info("💡 **Self-Consumption Mode:** The system will be sized to maximize on-site energy use, and savings will primarily come from avoiding grid purchases.", icon="🔋")
