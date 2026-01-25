@@ -1,20 +1,25 @@
-# 🦈 Sharkbite - Clean Energy Incentive Calculator
+# 🦈 Sharkbite - Clean Energy Finance Engine
  *Take a bite out of high electric bills!*
-
 <!---
-This application is a sophisticated financial modeling tool built with Streamlit. It guides users through a multi-step workflow to size a solar and battery system, identify eligibility for complex incentives like the USDA REAP grant, and generate a final, compliant financial summary, complete with AI-powered analysis and a downloadable PDF report.
+_This project is a **Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users model the technical and financial viability of clean energy projects** by navigating a complex landscape of incentives and financing options._
 
 ## ✨ Core Features
 
-*   **Multi-Screen Workflow:** A guided, 7-step user journey from initial data intake to final report export.
-*   **Solar & Battery Calculator:** Performs detailed hourly energy dispatch simulations based on NREL PVWatts data to accurately model savings.
-*   **REAP Grant Scoring:** A live, detailed scoring engine for the USDA REAP grant based on official criteria.
-*   **Incentive Stacker:** Models the complex interactions and compliance rules (e.g., Federal Share Cap) for stacking multiple grants and tax incentives.
-*   **AI-Powered Analysis:** Leverages AWS Bedrock (Claude 3.5 Sonnet) to provide contextual recommendations, financial risk analysis, and equipment suggestions.
-*   **PPA vs. Ownership Analyzer:** An optional module for homeowners to compare the long-term financial outcomes of leasing versus owning a solar system.
-*   **PDF Report Generation:** Creates a custom, investor-ready PDF summary of the entire project analysis.
+- **Multi-Screen Workflow:** A guided, 7-step user journey from initial data intake to final report export.
 
-This project is a Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users assess eligibility and estimate benefits for clean energy project incentives, with an initial focus on the USDA REAP grant.
+- **Advanced Solar & Battery Calculator:** Performs detailed hourly energy dispatch simulations based on NREL PVWatts data to accurately model savings, self-consumption, & grid independence. Includes "future load" modeling for EVs and heat pumps.
+
+- **Dynamic Multi-Grant Engine:** An eligibility checker that identifies and models over 14 federal & state incentive programs (SWEEP, VAPG, EQIP, CA CORE, etc.) based on user inputs.
+
+- **REAP Grant Scoring:** A live, detailed scoring engine for the USDA REAP grant based on official criteria.
+
+- **Incentive Stacker:** Models the complex interactions and compliance rules (e.g., Federal Share Cap) for stacking multiple grants and tax incentives.
+
+- **AI-Powered Analysis:** Leverages AWS Bedrock (Claude 4.5 Sonnet) to provide contextual recommendations, financial risk analysis, and equipment suggestions.
+
+- **PPA vs. Ownership Analyzer:** An optional, detailed comparison tool for Homeowners to compare the long-term financial outcomes of leasing vs. owning a solar system.
+
+- **Automated PDF Report:** Generates a custom, multi-page, investor-ready PDF summary of the entire project analysis, including embedded charts and AI insights.
 --->
 
 ## ⚙ Setup and Running the Application
@@ -71,10 +76,29 @@ streamlit run sharkbite_app.py
 
 This will start the Streamlit development server, and the application should open automatically in your default web browser. If not, the terminal will provide a `local URL: http://localhost:8501` that you can open manually.
 
+## 🚩 App Flowchart
+The **flowchart _(Mermaid)_** shows how a user is guided from a simple project idea to a complete, compliant, and investor-ready financial package, with integrated backend processes and optional AI analysis features at each key step.
+
+![Sharkbite Mermaid Diagram](final_mermaid_diagram.png)
+
+
+## 🧰 Tech Stack
+[![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Pandas](https://img.shields.io/badge/pandas-%23150458.svg?style=for-the-badge&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![NumPy](https://img.shields.io/badge/numpy-%23013243.svg?style=for-the-badge&logo=numpy&logoColor=white)](https://numpy.org/doc/)
+[![Matplotlib](https://img.shields.io/badge/Matplotlib-%23ffffff.svg?style=for-the-badge&logo=Matplotlib&logoColor=black)](https://matplotlib.org/)
+[![Plotly](https://img.shields.io/badge/Plotly-%233F4F75.svg?style=for-the-badge&logo=plotly&logoColor=white)](https://plotly.com/python/)
+[![Bedrock](https://img.shields.io/badge/Boto3%20SDK%20(AWS%20Bedrock)-FF9900?style=for-the-badge&logo=python&logoColor=white)](https://aws.amazon.com/bedrock/)
+[![fpdf2](https://img.shields.io/badge/fpdf2-28E60F?style=for-the-badge&logo=python&logoColor=white)](https://github.com/py-pdf/fpdf2)
+[![Pytest](https://img.shields.io/badge/Pytest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)](https://pypi.org/project/pytest/)
+
 
 ## 📁 Project Structure
 ```bash
 Sharkbite/
+├── .github/
+│   └── workflows/
+│       └── main.yml                 # GitHub CI/CD Actions
 ├── .streamlit/
 │   └── config.toml                  # Main App Theme
 │   └── secrets.toml                 # API keys and other secrets

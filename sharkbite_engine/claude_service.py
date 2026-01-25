@@ -99,7 +99,7 @@ def get_ai_recommendations(context: str, user_inputs: dict) -> list[str]:
         return []
         
     claude_response_str = response_data["text"]
-    recommendations = [line.strip().lstrip('* ').capitalize() for line in claude_response_str.split('\n') if line.strip().startswith('*')]
+    recommendations = [line.strip().lstrip('* ') for line in claude_response_str.split('\n') if line.strip().startswith('*')]
     return recommendations
 
 
