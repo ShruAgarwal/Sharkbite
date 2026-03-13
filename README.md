@@ -1,8 +1,11 @@
-# 🦈 Sharkbite - Clean Energy Finance Engine
- *Take a bite out of high electric bills!*
-<!---
-_This project is a **Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users model the technical and financial viability of clean energy projects** by navigating a complex landscape of incentives and financing options._
+<p align="center">
+  <img src="./assets/app_logo.jpg" alt="Sharkbite App Logo" width="250" height="250"/>
+</p>
 
+# 🦈 Sharkbite - Clean Energy Finance Engine
+
+_This project is a **Streamlit-based Minimum Viable Product (MVP) for the Sharkbite platform, designed to help users model the technical and financial viability of clean energy projects** by navigating a complex landscape of incentives and financing options._
+<!---
 ## ✨ Core Features
 
 - **Multi-Screen Workflow:** A guided, 7-step user journey from initial data intake to final report export.
@@ -55,11 +58,11 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure API Keys and Secrets
-<!--This application uses the NREL PVWatts API to estimate solar energy production which requires an API key from NREL.-->
+<!--This application uses the NLR PVWatts API to estimate solar energy production which requires an API key from NLR (previously NREL).-->
 > 📌 Replace the placeholder key values with your actual credentials within the `secrets.toml` file below as follows:
 ```toml
   # .streamlit/secrets.toml
-  NREL_API_KEY = "YOUR_API_KEY_HERE"
+  NLR_API_KEY = "YOUR_API_KEY_HERE"
 
   # AWS Credentials for accessing Amazon Bedrock model are required to power the AI features.
   AWS_ACCESS_KEY_ID = "YOUR_AWS_ACCESS_KEY_ID_HERE"
@@ -73,8 +76,8 @@ Once the environment is set up and the API key is configured, run the following 
 ```bash
 streamlit run sharkbite_app.py
 ```
-
 This will start the Streamlit development server, and the application should open automatically in your default web browser. If not, the terminal will provide a `local URL: http://localhost:8501` that you can open manually.
+
 
 ## 🚩 App Flowchart
 The **flowchart _(Mermaid)_** shows how a user is guided from a simple project idea to a complete, compliant, and investor-ready financial package, with integrated backend processes and optional AI analysis features at each key step.

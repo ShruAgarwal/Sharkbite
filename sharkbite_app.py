@@ -1,7 +1,7 @@
 import streamlit as st
 import boto3
 import logging, os
-from sharkbite_engine.solar_calculator_logic import NREL_API_KEY_HOLDER, perform_solar_battery_calculations
+from sharkbite_engine.solar_calculator_logic import NLR_API_KEY_HOLDER, perform_solar_battery_calculations
 from sharkbite_engine.ui_login_screen import display_login_screen
 from sharkbite_engine.ui_unified_intake_screen import display_unified_intake_screen
 from sharkbite_engine.ui_calculator_screen import display_solar_battery_calculator_screen
@@ -28,17 +28,17 @@ except FileNotFoundError:
     st.warning("custom_style.css not found. The app will run with default styling.")
 
 
-# --- NREL API Key Setup ---
-NREL_API_KEY_FROM_SECRETS = None
+# --- NLR API Key Setup (previously NREL) ---
+NLR_API_KEY_FROM_SECRETS = None
 try:
-    NREL_API_KEY_FROM_SECRETS = st.secrets.get("NREL_API_KEY")
-    NREL_API_KEY_HOLDER["key"] = NREL_API_KEY_FROM_SECRETS
-    if not NREL_API_KEY_FROM_SECRETS and 'nrel_key_warning_shown' not in st.session_state:
-        st.toast("NREL_API_KEY not found in secrets.toml. Solar Calculator may be limited.", icon="🚫")
-        st.session_state.nrel_key_warning_shown = True
+    NLR_API_KEY_FROM_SECRETS = st.secrets.get("NLR_API_KEY")
+    NLR_API_KEY_HOLDER["key"] = NLR_API_KEY_FROM_SECRETS
+    if not NLR_API_KEY_FROM_SECRETS and 'nlr_key_warning_shown' not in st.session_state:
+        st.toast("NLR_API_KEY not found in secrets.toml. Solar Calculator may be limited.", icon="🚫")
+        st.session_state.nlr_key_warning_shown = True
 except Exception:
     if 'secrets_error_shown' not in st.session_state:
-        st.toast("Error loading NREL_API_KEY from secrets. Solar Calculator may be limited.", icon="⚠️")
+        st.toast("Error loading NLR_API_KEY from secrets. Solar Calculator may be limited.", icon="⚠️")
         st.session_state.secrets_error_shown = True
 
 # --- Session State Initialization ---

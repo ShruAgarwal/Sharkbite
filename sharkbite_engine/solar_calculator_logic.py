@@ -9,8 +9,8 @@ from sharkbite_engine.utils import (
     generate_hourly_rate_schedule
 )
 
-PVWATTS_API_ENDPOINT_V8 = "https://developer.nrel.gov/api/pvwatts/v8.json"
-NREL_API_KEY_HOLDER = {"key": None}
+PVWATTS_API_ENDPOINT_V8 = "https://developer.nlr.gov/api/pvwatts/v8.json"
+NLR_API_KEY_HOLDER = {"key": None}
 
 
 @st.cache_data(ttl=3600)
@@ -53,7 +53,7 @@ def geocode_address_nominatim(address):
 def fetch_pvwatts_hourly_production(lat, lon, system_capacity_kw,
                                 azimuth=180, tilt=20, array_type=1, module_type=0, losses=14):
 
-    api_key = NREL_API_KEY_HOLDER["key"]
+    api_key = NLR_API_KEY_HOLDER["key"]
     system_capacity_float = float(system_capacity_kw)
     if not api_key:
         return "NREL API Key is missing."

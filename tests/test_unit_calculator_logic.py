@@ -11,7 +11,7 @@ project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
 
 from sharkbite_engine.solar_calculator_logic import (
-    NREL_API_KEY_HOLDER,
+    NLR_API_KEY_HOLDER,
     run_hourly_dispatch_simulation,
     calculate_final_financials,
     fetch_pvwatts_hourly_production,
@@ -246,13 +246,13 @@ def test_pvwatts_api_integration_mocked():
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = mock_response_json
         
-        # We also need to mock NREL_API_KEY_HOLDER in the logic file implicitly
+        # We also need to mock NLR_API_KEY_HOLDER in the logic file implicitly
         # or pass the key validation check.
         # Assuming code handles key presence, we call the function.
         
         # NOTE: The function `fetch_pvwatts_hourly_production` expects 8760 points usually,
         # but for unit testing parsing, we verify it returns what the JSON gave. 
-        NREL_API_KEY_HOLDER['key'] = "TEST_KEY"
+        NLR_API_KEY_HOLDER['key'] = "TEST_KEY"
         result = fetch_pvwatts_hourly_production(34.0, -118.0, 5.0)
         
         # Verify it extracts the 'ac' list
